@@ -6,6 +6,8 @@
 [![Hermes Agent](https://img.shields.io/badge/Hermes%20Agent-dashboard%20plugin-7c3aed.svg)](https://github.com/NousResearch/hermes-agent)
 [![Build](https://img.shields.io/badge/build-none%20required-success.svg)](#development)
 
+![Hermes TaskList — grouped list view of the Kanban board](docs/screenshot-list.png)
+
 The stock Hermes Agent dashboard ships a Kanban board for its multi‑agent task system. It's great for dragging cards across columns, but it's *only* a board. **Hermes TaskList** gives you the other half of the picture: a dense, sortable, filterable **task list** that you can **group by status, assignee, priority, tenant, or project** — the way you'd work in ClickUp, Linear, or Asana — backed by the exact same task database. Switch between the board and the list whenever the view fits the job.
 
 It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.db` through Hermes' existing `/api/plugins/kanban/*` REST API, so it stays perfectly in sync with the Kanban tab, the `hermes kanban` CLI, and the agent workers.
@@ -26,11 +28,13 @@ It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.
 
 ## Screenshots
 
-> Add your own screenshots here once installed (recommended for the GitHub repo).
+The **List** tab — native Kanban boards as folders in the sidebar, lists inside them, tasks grouped by status with inline status/priority/assignee/list editing and per‑list subtask counts:
 
-| List view with grouping | Task detail popup |
-| --- | --- |
-| `docs/screenshot-list.png` | `docs/screenshot-modal.png` |
+![List view grouped by status](docs/screenshot-list.png)
+
+The **task detail popup** — a near‑full‑screen, two‑pane view with the editable fields, description, dependencies, result and attachments on the left, and an **Activity** pane (events, run history, comments) on the right:
+
+![Task detail popup](docs/screenshot-modal.png)
 
 ## Requirements
 
@@ -45,6 +49,8 @@ Built and tested against Hermes Agent `main` (≈ v0.14.x). The plugin only reli
 ### Easiest — install from the dashboard (no terminal)
 
 Open the **Plugins** tab in the dashboard sidebar → **Install from GitHub / Git URL**, paste the repo and click **Install**:
+
+![Plugins tab — Install from GitHub / Git URL](docs/screenshot-install.png)
 
 ```
 https://github.com/LouisKlimek/Hermes-Tasklist-Plugin
