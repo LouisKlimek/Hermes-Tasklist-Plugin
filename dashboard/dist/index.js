@@ -55,6 +55,7 @@
   function BoardIcon() { return h("svg", { width: 13, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: "0 0 auto", opacity: .8 } }, h("rect", { x: 3, y: 3, width: 18, height: 18, rx: 2 }), h("line", { x1: 9, y1: 3, x2: 9, y2: 21 }), h("line", { x1: 15, y1: 3, x2: 15, y2: 21 })); }
   function CommentIcon() { return h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" })); }
   function XIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("line", { x1: 18, y1: 6, x2: 6, y2: 18 }), h("line", { x1: 6, y1: 6, x2: 18, y2: 18 })); }
+  function TrashIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("polyline", { points: "3 6 5 6 21 6" }), h("path", { d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }), h("line", { x1: 10, y1: 11, x2: 10, y2: 17 }), h("line", { x1: 14, y1: 11, x2: 14, y2: 17 })); }
   function PlusIcon(sz) { sz = sz || 14; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" }, h("line", { x1: 12, y1: 5, x2: 12, y2: 19 }), h("line", { x1: 5, y1: 12, x2: 19, y2: 12 })); }
   function PencilIcon(sz) { sz = sz || 12; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M12 20h9" }), h("path", { d: "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" })); }
 
@@ -232,7 +233,8 @@
     s = useState(""); var addTaskTitle = s[0], setAddTaskTitle = s[1];
     s = useState(null); var modalId = s[0], setModalId = s[1];
     s = useState("details"); var modalTab = s[0], setModalTab = s[1];
-    useEffect(function () { setModalTab("details"); }, [modalId]);
+    s = useState(null); var confirmDel = s[0], setConfirmDel = s[1];
+    useEffect(function () { setModalTab("details"); setConfirmDel(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
     s = useState(""); var titleDraft = s[0], setTitleDraft = s[1];
@@ -360,6 +362,14 @@
 
     // ---- detail-popup mutations (parity with the native kanban drawer) ------
     function reloadTask(id) { loadDetail(id, true); load(true); }
+    function deleteTask(id) {
+      if (!id) return;
+      setNotice(null);
+      send("DELETE", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), null)
+        .then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: null }).catch(function () {}); })
+        .then(function () { setConfirmDel(null); setModalId(null); load(true); loadTreeFor(board); })
+        .catch(function (e) { setConfirmDel(null); setNotice("Delete failed: " + ((e && e.message) || "error")); });
+    }
     function addComment(id) { var b = commentDraft.trim(); if (!b) return; setNotice(null); send("POST", KAPI + "/tasks/" + encodeURIComponent(id) + "/comments" + bq(), { body: b }).then(function () { setCommentDraft(""); reloadTask(id); }).catch(function (e) { setNotice("Could not add comment: " + ((e && e.message) || "error")); }); }
     function saveDesc(id) { setNotice(null); send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { body: descDraft }).then(function () { setDescEdit(false); reloadTask(id); }).catch(function (e) { setNotice("Could not save description: " + ((e && e.message) || "error")); }); }
     function addLink(parent, child) { setNotice(null); send("POST", KAPI + "/links" + bq(), { parent_id: parent, child_id: child }).then(function () { setAddParentSel(""); setAddChildSel(""); loadDetail(child, true); loadDetail(parent, true); load(true); loadEdges(); }).catch(function (e) { setNotice("Could not link tasks: " + ((e && e.message) || "error")); }); }
@@ -548,6 +558,7 @@
         );
       }
       return h("div", {
+        key: t.id, draggable: true, onClick: function () { setModalId(t.id); },
         onDragStart: function (e) { dragRef.current = t.id; setDragId(t.id); try { e.dataTransfer.setData("text/plain", t.id); e.dataTransfer.effectAllowed = "move"; } catch (x) {} },
         onDragEnd: function () { dragRef.current = null; setDragId(null); setDropList(null); },
         style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", paddingLeft: (14 + depth * 22) + "px", borderTop: "1px solid " + borderC, cursor: "grab", fontSize: 13, opacity: dragId === t.id ? .4 : 1 },
@@ -772,9 +783,19 @@
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
+          h("button", { onClick: function () { setConfirmDel(t.id); }, title: "Delete task", style: { background: "transparent", color: "#f87171", border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, TrashIcon(16), isNarrow ? null : "Delete"),
           h("button", { onClick: function () { setModalId(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
         body);
-      return h(Portal, { onClose: function () { setModalId(null); } }, h("div", { onClick: function () { setModalId(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel));
+      return h(Fragment, null,
+        h(Portal, { onClose: function () { setModalId(null); } }, h("div", { onClick: function () { setModalId(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel)),
+        confirmDel ? h(Portal, { onClose: function () { setConfirmDel(null); } },
+          h("div", { onClick: function () { setConfirmDel(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483600, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" } },
+            h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(420px, 96vw)", background: cardBg, border: "1px solid " + borderC, borderRadius: 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", padding: "22px 24px" } },
+              h("div", { style: { fontSize: 16, fontWeight: 700, marginBottom: 10 } }, "Delete task?"),
+              h("div", { style: { fontSize: 13, lineHeight: 1.55, color: muted, marginBottom: 20 } }, "This permanently deletes the task along with its comments, links, attachments and history. This can\u2019t be undone."),
+              h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10 } },
+                h("button", { onClick: function () { setConfirmDel(null); }, "data-tl-close": "1", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
+                h("button", { onClick: function () { deleteTask(confirmDel); }, style: { background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 } }, TrashIcon(15), "Delete"))))) : null);
     }
 
     // ---- page ---------------------------------------------------------------
