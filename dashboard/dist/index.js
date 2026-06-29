@@ -524,8 +524,28 @@
       var disc = kids
         ? h("span", { onClick: function (e) { e.stopPropagation(); var willOpen = !expandedTasks[t.id]; setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); if (willOpen) ensureChildEdges(t.id); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", color: muted, cursor: "pointer", flex: "0 0 auto" } }, Caret(expanded, 12))
         : h("span", { style: { display: "inline-block", width: 12, flex: "0 0 auto" } });
+      if (isNarrow) {
+        return h("div", {
+          key: t.id, onClick: function () { setModalId(t.id); },
+          style: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 14px", paddingLeft: (14 + depth * 16) + "px", borderTop: "1px solid " + borderC, cursor: "pointer", fontSize: 13 }
+        },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } },
+            disc,
+            Dot(pri.color, 8),
+            h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 } }, t.title || "(untitled)"),
+            prog ? badge(prog.done + "/" + prog.total, prog.done >= prog.total && prog.total > 0 ? "#34d399" : "#fbbf24") : null,
+            (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null)
+          ),
+          h("div", { style: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingLeft: 20 } },
+            h(DotSelect, { value: t.status, options: statusOptions(t).map(function (o) { return { value: o.value, label: o.label, dot: statusMeta(o.value).dot }; }), onChange: function (v) { setStatus(t, v); }, opts: { small: true, pill: true } }),
+            h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { small: true, pill: true } }),
+            h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { small: true, pill: true, maxWidth: "150px" } }),
+            h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { small: true, pill: true, maxWidth: "140px" } }),
+            h("span", { style: { fontSize: 11, color: muted, marginLeft: "auto" } }, ago(t.created_at, now))
+          )
+        );
+      }
       return h("div", {
-        key: t.id, draggable: true, onClick: function () { setModalId(t.id); },
         onDragStart: function (e) { dragRef.current = t.id; setDragId(t.id); try { e.dataTransfer.setData("text/plain", t.id); e.dataTransfer.effectAllowed = "move"; } catch (x) {} },
         onDragEnd: function () { dragRef.current = null; setDragId(null); setDropList(null); },
         style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", paddingLeft: (14 + depth * 22) + "px", borderTop: "1px solid " + borderC, cursor: "grab", fontSize: 13, opacity: dragId === t.id ? .4 : 1 },
@@ -580,7 +600,9 @@
           h("span", { style: { fontWeight: 600, fontSize: 13, textTransform: groupBy === "status" ? "uppercase" : "none", letterSpacing: groupBy === "status" ? ".03em" : 0 } }, sec.label),
           h("span", { style: { fontSize: 11, color: muted } }, sec.items.length + (doneCount && groupBy !== "status" ? "  \u00b7  " + doneCount + " done" : ""))
         ),
-        isCollapsed ? null : h("div", { style: { overflowX: isNarrow ? "auto" : "visible" } }, h("div", { style: { minWidth: isNarrow ? 660 : "auto" } }, columnHeader(), sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec)))
+        isCollapsed ? null : (isNarrow
+          ? h("div", null, sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec))
+          : h("div", { style: { overflowX: "visible" } }, h("div", { style: { minWidth: "auto" } }, columnHeader(), sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec))))
       );
     }
 
