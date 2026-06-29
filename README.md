@@ -102,7 +102,7 @@ The List tab has a left sidebar, like ClickUp — with your native Kanban **boar
 - Open a board and click its **+** to create a **list** inside it. Click a list to open it — the main area shows that list's tasks grouped by **status** (To Do, Done, … as collapsible sections). Empty status sections are hidden; **To Do** is always shown so you can quickly add tasks. Each board also has **All tasks** and **No list**.
 - **Move a task into a list** two ways: drag the task row onto a list in the sidebar, or use the **List** dropdown on the task row (and in the detail popup). Drag a task onto **No list** to remove it. (Lists belong to a board, so tasks move between lists within the same board.)
 - Inside an open list, each status section has a **+ Add task** row that creates a new task on that board in that list and status.
-- **Subtasks**: a task that has kanban child links shows a ▸ arrow — click it to expand its children inline (the parent's `N/M` pill shows how many are done). Children appear nested under their parent rather than as separate rows.
+- **Subtasks**: a task that has kanban child links shows a ▸ arrow on the left of its title — click it to show/hide its children inline (the parent's `N/M` pill shows how many are done). Children appear nested under their parent rather than as separate rows. **Moving a parent into a list moves its subtasks with it** (via drag, the row List dropdown, or the popup).
 - Click a list's name to **rename** it; the **✕** deletes it (the tasks stay on the board, they just leave the list).
 
 ## How it works

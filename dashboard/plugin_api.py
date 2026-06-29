@@ -22,6 +22,15 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+# Best-effort: reuse Hermes' own kanban path resolution so the subtask-links
+# read finds the right kanban.db for ANY board (honours HERMES_KANBAN_HOME,
+# profiles and named-board directories). Falls back to a heuristic if the
+# module layout ever changes.
+try:  # pragma: no cover - depends on host install
+    from hermes_cli import kanban_db as _kdb
+except Exception:  # pragma: no cover
+    _kdb = None
+
 router = APIRouter()
 
 
@@ -67,8 +76,17 @@ def _board(b: Optional[str]) -> str:
     return b or "default"
 
 
-def _kanban_db_path(slug: str) -> Path:
-    """Locate the kanban.db for a board (default board lives at the root)."""
+def _kanban_db_path(slug: Optional[str]) -> Optional[Path]:
+    """Locate the kanban.db for a board.
+
+    Prefers Hermes' own ``kanban_db.kanban_db_path`` (exact, install-aware);
+    falls back to the documented on-disk layout if that import isn't present.
+    """
+    if _kdb is not None:
+        try:
+            return Path(_kdb.kanban_db_path(slug))
+        except Exception:
+            pass
     home = _hermes_home()
     if slug and slug != "default":
         p = home / "kanban" / "boards" / slug / "kanban.db"

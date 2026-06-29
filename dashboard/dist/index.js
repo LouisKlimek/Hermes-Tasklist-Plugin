@@ -276,7 +276,7 @@
     function createList(name, slug) { name = (name || "").trim(); if (!name) return; var color = LIST_COLORS[treeFor(slug).lists.length % LIST_COLORS.length]; send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { setAdding(null); setAddName(""); loadTreeFor(slug); if (r && r.list) activate(slug, { type: "list", id: r.list.id }); }).catch(function (e) { setNotice("Could not create list: " + ((e && e.message) || "error")); }); }
     function renameNode() { if (!editing) return; var nm = editName.trim(); var cur = editing; setEditing(null); if (!nm) return; send("PATCH", TLAPI + "/lists/" + encodeURIComponent(cur.id) + tlq(cur.board), { name: nm }).then(function () { loadTreeFor(cur.board); }).catch(function () { loadTreeFor(cur.board); }); }
     function deleteList(l, slug) { if (!window.confirm("Delete list \u201c" + l.name + "\u201d? Tasks stay on the board, they just leave this list.")) return; send("DELETE", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), null).then(function () { if (scope.type === "list" && scope.id === l.id) setScope({ type: "all" }); loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
-    function moveToList(taskId, listId) { if (!taskId) return; send("PUT", TLAPI + "/membership" + tlq(board), { task_id: taskId, list_id: listId || null }).then(function () { loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
+    function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }); }); }); chain.then(function () { loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
     function addTask(listId, status, title) {
       title = (title || "").trim(); if (!title) return; setNotice(null);
       send("POST", KAPI + "/tasks" + bq(), { title: title, triage: status === "triage" }).then(function (r) {
@@ -317,8 +317,24 @@
     }, [tasks, scope, activeMembership, liveListIds, search, fAssignee]);
 
     // ---- subtask nesting helpers --------------------------------------------
-    function hasKids(t) { var c = edges.children[t.id]; if (!c) return false; for (var i = 0; i < c.length; i++) if (taskById[c[i]]) return true; return false; }
+    function hasKids(t) { var c = edges.children[t.id]; if (c) { for (var i = 0; i < c.length; i++) if (taskById[c[i]]) return true; } if (t.link_counts && t.link_counts.children > 0) return true; if (t.progress && t.progress.total > 0) return true; return false; }
     function childrenOf(t) { var c = edges.children[t.id] || []; var out = []; c.forEach(function (cid) { var ct = taskById[cid]; if (ct) out.push(ct); }); out.sort(function (a, b) { var ap = a.priority == null ? 0 : a.priority, bp = b.priority == null ? 0 : b.priority; if (ap !== bp) return bp - ap; return (a.created_at || 0) - (b.created_at || 0); }); return out; }
+    // belt-and-braces: if the global links read missed this parent, fetch its
+    // child ids from the kanban task detail and merge them into edges
+    function ensureChildEdges(tid) {
+      if (edges.children[tid] && edges.children[tid].length) return;
+      getJSON(KAPI + "/tasks/" + encodeURIComponent(tid) + bq()).then(function (dd) {
+        var kids = (dd && dd.links && dd.links.children) || [];
+        if (!kids.length) return;
+        setEdges(function (e) {
+          var ch = Object.assign({}, e.children); var pa = Object.assign({}, e.parents);
+          ch[tid] = kids.slice();
+          kids.forEach(function (cid) { var arr = (pa[cid] || []).slice(); if (arr.indexOf(tid) === -1) arr.push(tid); pa[cid] = arr; });
+          return { children: ch, parents: pa };
+        });
+      }).catch(function () {});
+    }
+    function descendantsOf(rootId) { var out = []; var seen = {}; var stack = (edges.children[rootId] || []).slice(); while (stack.length) { var c = stack.pop(); if (seen[c]) continue; seen[c] = 1; out.push(c); var g = edges.children[c] || []; for (var i = 0; i < g.length; i++) stack.push(g[i]); } return out; }
 
     // ---- sections -----------------------------------------------------------
     var sections = useMemo(function () {
@@ -435,7 +451,7 @@
       var kids = hasKids(t);
       var expanded = !!expandedTasks[t.id];
       var disc = kids
-        ? h("span", { onClick: function (e) { e.stopPropagation(); setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", color: muted, cursor: "pointer", flex: "0 0 auto" } }, Caret(expanded, 12))
+        ? h("span", { onClick: function (e) { e.stopPropagation(); var willOpen = !expandedTasks[t.id]; setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); if (willOpen) ensureChildEdges(t.id); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", color: muted, cursor: "pointer", flex: "0 0 auto" } }, Caret(expanded, 12))
         : h("span", { style: { display: "inline-block", width: 12, flex: "0 0 auto" } });
       return h("div", {
         key: t.id, draggable: true, onClick: function () { setModalId(t.id); },
