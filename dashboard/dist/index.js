@@ -248,15 +248,21 @@
     s = useState(""); var addParentSel = s[0], setAddParentSel = s[1];
     s = useState(""); var addChildSel = s[0], setAddChildSel = s[1];
     s = useState(false); var isNarrow = s[0], setIsNarrow = s[1];
+    s = useState(false); var isCompact = s[0], setIsCompact = s[1];
     s = useState(true); var sidebarOpen = s[0], setSidebarOpen = s[1];
 
     useEffect(function () {
       if (typeof window === "undefined" || !window.matchMedia) return;
-      var mq = window.matchMedia("(max-width: 820px)");
-      function on() { setIsNarrow(mq.matches); setSidebarOpen(!mq.matches); }
+      var mq = window.matchMedia("(max-width: 820px)");      // mobile: modal fullscreen + sidebar stacking
+      var mc = window.matchMedia("(max-width: 1080px)");     // compact: task rows become cards (title gets full width)
+      function on() { setIsNarrow(mq.matches); setSidebarOpen(!mq.matches); setIsCompact(mc.matches); }
       on();
-      if (mq.addEventListener) mq.addEventListener("change", on); else if (mq.addListener) mq.addListener(on);
-      return function () { if (mq.removeEventListener) mq.removeEventListener("change", on); else if (mq.removeListener) mq.removeListener(on); };
+      if (mq.addEventListener) { mq.addEventListener("change", on); mc.addEventListener("change", on); }
+      else if (mq.addListener) { mq.addListener(on); mc.addListener(on); }
+      return function () {
+        if (mq.removeEventListener) { mq.removeEventListener("change", on); mc.removeEventListener("change", on); }
+        else if (mq.removeListener) { mq.removeListener(on); mc.removeListener(on); }
+      };
     }, []);
 
     var lastEvent = useRef(-1);
@@ -537,7 +543,7 @@
       var disc = kids
         ? h("span", { onClick: function (e) { e.stopPropagation(); var willOpen = !expandedTasks[t.id]; setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); if (willOpen) ensureChildEdges(t.id); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", color: muted, cursor: "pointer", flex: "0 0 auto" } }, Caret(expanded, 12))
         : h("span", { style: { display: "inline-block", width: 12, flex: "0 0 auto" } });
-      if (isNarrow) {
+      if (isCompact) {
         return h("div", {
           key: t.id, onClick: function () { setModalId(t.id); },
           style: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 14px", paddingLeft: (14 + depth * 16) + "px", borderTop: "1px solid " + borderC, cursor: "pointer", fontSize: 13 }
@@ -562,12 +568,12 @@
         key: t.id, draggable: true, onClick: function () { setModalId(t.id); },
         onDragStart: function (e) { dragRef.current = t.id; setDragId(t.id); try { e.dataTransfer.setData("text/plain", t.id); e.dataTransfer.effectAllowed = "move"; } catch (x) {} },
         onDragEnd: function () { dragRef.current = null; setDragId(null); setDropList(null); },
-        style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", paddingLeft: (14 + depth * 22) + "px", borderTop: "1px solid " + borderC, cursor: "grab", fontSize: 13, opacity: dragId === t.id ? .4 : 1 },
+        style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", paddingLeft: (14 + depth * 22) + "px", borderTop: "1px solid " + borderC, cursor: "pointer", fontSize: 13, opacity: dragId === t.id ? .4 : 1 },
         onMouseEnter: function (e) { e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { e.currentTarget.style.background = "transparent"; }
       },
         h("div", { style: { flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 10 } },
           disc,
-          h("span", { style: { display: "inline-flex", color: muted } }, Grip()),
+          h("span", { title: "Drag to move into a list", style: { display: "inline-flex", color: muted, cursor: "grab" } }, Grip()),
           Dot(pri.color, 8),
           h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.title || "(untitled)"),
           prog ? badge(prog.done + "/" + prog.total, prog.done >= prog.total && prog.total > 0 ? "#34d399" : "#fbbf24") : null,
@@ -614,7 +620,7 @@
           h("span", { style: { fontWeight: 600, fontSize: 13, textTransform: groupBy === "status" ? "uppercase" : "none", letterSpacing: groupBy === "status" ? ".03em" : 0 } }, sec.label),
           h("span", { style: { fontSize: 11, color: muted } }, sec.items.length + (doneCount && groupBy !== "status" ? "  \u00b7  " + doneCount + " done" : ""))
         ),
-        isCollapsed ? null : (isNarrow
+        isCollapsed ? null : (isCompact
           ? h("div", null, sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec))
           : h("div", { style: { overflowX: "visible" } }, h("div", { style: { minWidth: "auto" } }, columnHeader(), sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec))))
       );
