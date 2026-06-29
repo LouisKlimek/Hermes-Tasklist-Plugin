@@ -18,6 +18,17 @@
 (function () {
   "use strict";
 
+  var TASKLIST_BUILD = "2026-06-29-delete+confirm";
+  try {
+    console.info("[tasklist] build " + TASKLIST_BUILD + " loaded");
+    // sweep any orphaned overlay nodes a previous (crashed) build may have left
+    // behind — a stale full-screen overlay would silently swallow row clicks.
+    var _orphans = document.querySelectorAll("[data-tasklist-portal]");
+    for (var _i = 0; _i < _orphans.length; _i++) {
+      if (!_orphans[_i].firstChild && _orphans[_i].parentNode) _orphans[_i].parentNode.removeChild(_orphans[_i]);
+    }
+  } catch (e) {}
+
   var SDK = window.__HERMES_PLUGIN_SDK__;
   var React = SDK.React;
   var h = React.createElement;
@@ -139,9 +150,9 @@
         while (holder.firstChild) pe.appendChild(holder.firstChild);
       }
       return function () {
-        pe.removeEventListener("click", onNativeClick);
-        if (!_createPortal && holder) { while (pe.firstChild) holder.appendChild(pe.firstChild); }
-        if (pe.parentNode) pe.parentNode.removeChild(pe);
+        try { pe.removeEventListener("click", onNativeClick); } catch (e) {}
+        try { if (!_createPortal && holder) { while (pe.firstChild) holder.appendChild(pe.firstChild); } } catch (e) {}
+        try { if (pe.parentNode) pe.parentNode.removeChild(pe); } catch (e) {}
       };
     }, []);
     if (_createPortal && peRef.current) return h(Fragment, null, h("div", { ref: holderRef, style: { display: "none" } }), _createPortal(props.children, peRef.current));
