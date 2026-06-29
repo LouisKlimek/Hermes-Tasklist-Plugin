@@ -81,6 +81,18 @@
   var bgMuted = "var(--muted, rgba(255,255,255,.03))";
   var accent = "var(--primary, #6366f1)";
 
+  (function injectStyle() {
+    try {
+      if (typeof document === "undefined" || document.getElementById("tl-style")) return;
+      var st = document.createElement("style"); st.id = "tl-style";
+      st.textContent = ".tl-editable{border:1px solid transparent;border-radius:8px;transition:background .12s,border-color .12s;cursor:text}"
+        + ".tl-editable:hover{background:var(--muted,rgba(255,255,255,.05));border-color:var(--border,#2a2a2a)}"
+        + ".tl-penhint{opacity:0;transition:opacity .12s}"
+        + ".tl-editable:hover .tl-penhint{opacity:1}";
+      document.head.appendChild(st);
+    } catch (e) {}
+  })();
+
   function editSelect(value, onChange, options, title, opts) {
     opts = opts || {};
     return h("span", { onClick: function (e) { e.stopPropagation(); }, style: opts.full ? { display: "block" } : null },
@@ -88,6 +100,32 @@
         style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 6, padding: opts.lg ? "8px 11px" : (opts.pill ? "2px 7px" : "4px 8px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || "none" } },
         options.map(function (o) { return h("option", { key: o.value, value: o.value, style: { background: "var(--background,#111)", color: "var(--foreground,#eee)" } }, o.label); })));
   }
+  function DotSelect(props) {
+    var value = props.value, options = props.options || [], onChange = props.onChange, opts = props.opts || {};
+    var st = useState(false); var open = st[0], setOpen = st[1];
+    var ref = useRef(null);
+    useEffect(function () {
+      if (!open) return;
+      function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+      function onKey(e) { if (e.key === "Escape") setOpen(false); }
+      document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
+      return function () { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+    }, [open]);
+    var cur = null; for (var i = 0; i < options.length; i++) { if (String(options[i].value) === String(value)) { cur = options[i]; break; } }
+    return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block" } },
+      h("button", { type: "button", onClick: function () { setOpen(!open); }, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 8, width: opts.full ? "100%" : undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left" } },
+        cur && cur.dot ? Dot(cur.dot, 9) : null,
+        h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, cur ? cur.label : String(value || "")),
+        h("span", { style: { display: "inline-flex", color: muted } }, Caret(false, 11))),
+      open ? h("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, minWidth: "100%", maxHeight: 280, overflow: "auto", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.5)", zIndex: 50, padding: 4 } },
+        options.map(function (o) {
+          var sel = String(o.value) === String(value);
+          return h("div", { key: o.value, onClick: function () { onChange(o.value); setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", background: sel ? accent + "22" : "transparent" }, onMouseEnter: function (e) { if (!sel) e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { if (!sel) e.currentTarget.style.background = "transparent"; } },
+            o.dot ? Dot(o.dot, 9) : h("span", { style: { width: 9, flex: "0 0 auto" } }),
+            h("span", null, o.label));
+        })) : null);
+  }
+
   function statusOptions(t) { var o = SETTABLE.map(function (st) { return { value: st, label: statusMeta(st).label }; }); if (SETTABLE.indexOf(t.status) === -1) o.unshift({ value: t.status, label: statusMeta(t.status).label }); return o; }
   function prioOptions(t) { var b = [{ value: "3", label: "Urgent" }, { value: "2", label: "High" }, { value: "1", label: "Normal" }, { value: "0", label: "Low" }]; var c = t.priority == null ? 0 : t.priority; if ([0, 1, 2, 3].indexOf(c) === -1) b.unshift({ value: String(c), label: "P" + c }); return b; }
 
@@ -480,8 +518,8 @@
 
       // ---- quick fields (status / priority / assignee / list + read-only) ----
       var fields = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px", paddingBottom: 26, borderBottom: "1px solid " + borderC } },
-        field("Status", editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", { full: true, lg: true })),
-        field("Priority", editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", { full: true, lg: true })),
+        field("Status", h(DotSelect, { value: t.status, options: statusOptions(t).map(function (o) { return { value: o.value, label: o.label, dot: statusMeta(o.value).dot }; }), onChange: function (v) { setStatus(t, v); }, opts: { full: true, lg: true } })),
+        field("Priority", h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, lg: true } })),
         field("Assignee", editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { full: true, lg: true })),
         field("List", editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { full: true, lg: true })),
         readField("Workspace", task.workspace_path ? (task.workspace_kind + " \u00b7 " + task.workspace_path) : task.workspace_kind),
@@ -493,16 +531,19 @@
       if (!d) L.push(h("div", { key: "ld", style: { fontSize: 12.5, color: muted, paddingTop: 18 } }, "Loading details\u2026"));
       if (d && d._error) L.push(h("div", { key: "er", style: { fontSize: 12.5, color: "#f87171", paddingTop: 18 } }, "Failed to load full details (editing still works)."));
 
-      // ---- Description (editable) --------------------------------------------
-      var descRight = descEdit ? null : h("button", { onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 12 } }, "edit");
+      // ---- Description (click anywhere to edit, ClickUp-style) ---------------
       var descBody = descEdit
         ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
-            h("textarea", { autoFocus: true, value: descDraft, onChange: function (e) { setDescDraft(e.target.value); }, className: "font-courier", style: { width: "100%", minHeight: 150, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, boxSizing: "border-box" } }),
+            h("textarea", { autoFocus: true, value: descDraft, onChange: function (e) { setDescDraft(e.target.value); }, className: "font-courier", style: { width: "100%", minHeight: 150, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + accent, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, boxSizing: "border-box" } }),
             h("div", { style: { display: "flex", gap: 10 } },
               h("button", { onClick: function () { saveDesc(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Save"),
               h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Cancel")))
-        : (task.body ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.65 } }, task.body) : muteSpan("\u2014 no description \u2014"));
-      L.push(h("div", { key: "desc" }, section("Description", descRight, descBody, { first: true })));
+        : h("div", { className: "tl-editable", onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, title: "Click to edit", style: { position: "relative", padding: "12px 14px", minHeight: 46 } },
+            task.body
+              ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.65 } }, task.body)
+              : h("span", { style: { fontSize: 13.5, color: muted, fontStyle: "italic" } }, "Add a description\u2026"),
+            h("span", { className: "tl-penhint", style: { position: "absolute", top: 9, right: 11, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: muted, pointerEvents: "none" } }, PencilIcon(12), "Edit"));
+      L.push(h("div", { key: "desc" }, section("Description", null, descBody, { first: true })));
 
       // ---- Dependencies ------------------------------------------------------
       var links = (d && d.links) || { parents: [], children: [] };
