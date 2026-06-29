@@ -15,7 +15,7 @@ It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.
 ## Features
 
 - **Grouped list view** — inside any list, group tasks by **Status** (default, the kanban columns), **Assignee**, **Priority**, or nothing. Collapsible sections with task counts.
-- **Groups & lists with drag & drop** — a ClickUp‑style left sidebar where you create **groups** and, inside them, named **lists**. Open a list to see its tasks grouped by status; **drag a task onto a list** (or use the per‑task List dropdown) to move it; add tasks straight into a list with **+ Add task**. Groups/lists are persistent and per‑board, stored by a tiny companion backend.
+- **Boards → lists with drag & drop** — a ClickUp‑style left sidebar where every native Kanban **board** is a folder. Create named **lists** inside a board, click one to open it, **drag a task onto a list** (or use the per‑task List dropdown) to move it, and add tasks straight into a list with **+ Add task**. Lists are persistent and per‑board, stored by a tiny companion backend.
 - **Sort & filter** — sort within each group by priority, created date, or title (asc/desc); full‑text search across title / id / body; filter by tenant and assignee; toggle archived tasks.
 - **Inline editing** — change a task's **status**, **priority**, and **assignee** right from the row, without opening anything. Edits route through the same validated state machine the board uses.
 - **ClickUp‑style task detail popup** — click any task to open a modal with the full picture: editable title, status/priority/assignee, the full body, the latest run summary, workspace and timing metadata, parent/child links (clickable), comment threads, and run history.
@@ -85,15 +85,15 @@ Then rescan (the **↻** in the Plugins tab, or `curl http://127.0.0.1:9119/api/
 - Edit a task's **status**, **priority**, or **assignee** directly in its row.
 - **Click a task** to open the detail popup — edit the title (Enter or click‑away to save), update fields, read the body, comments, links, and run history. Close with the ✕, a click on the backdrop, or `Esc`.
 
-### Groups & lists (the left sidebar)
+### Boards & lists (the left sidebar)
 
-The List tab has a left sidebar, like ClickUp:
+The List tab has a left sidebar, like ClickUp — with your native Kanban **boards** as the top level:
 
-- Click **+ Group** to create a top‑level group, and **+ List** (or the **+** on a group header) to create a list inside it. Lists can also live ungrouped at the top.
-- Click a list to **open** it — the main area shows that list's tasks grouped by **status** (To Do, Done, … as collapsible sections). **All tasks** and **No list** are always available at the top.
-- **Move a task into a list** two ways: drag the task row onto a list in the sidebar, or use the **List** dropdown on the task row (and in the detail popup). Drag a task onto **No list** to remove it.
-- Inside an open list, each status section has a **+ Add task** row that creates a new task on the board in that list and status.
-- Click a group's or list's name to **rename** it; the **✕** deletes it (deleting a group keeps its lists; deleting a list just detaches its tasks — the tasks stay on the board).
+- Each board is a collapsible folder. New boards are created the normal way in the **Kanban** tab; this sidebar simply lists them.
+- Open a board and click its **+** to create a **list** inside it. Click a list to open it — the main area shows that list's tasks grouped by **status** (To Do, Done, … as collapsible sections). Empty status sections are hidden; **To Do** is always shown so you can quickly add tasks. Each board also has **All tasks** and **No list**.
+- **Move a task into a list** two ways: drag the task row onto a list in the sidebar, or use the **List** dropdown on the task row (and in the detail popup). Drag a task onto **No list** to remove it. (Lists belong to a board, so tasks move between lists within the same board.)
+- Inside an open list, each status section has a **+ Add task** row that creates a new task on that board in that list and status.
+- Click a list's name to **rename** it; the **✕** deletes it (the tasks stay on the board, they just leave the list).
 
 ## How it works
 
@@ -105,7 +105,7 @@ Hermes TaskList is a thin client over the existing kanban backend, plus a tiny c
 └───────┬──────────────┬──────┘
         │              │  SDK.fetchJSON
         │              ▼
-        │     ┌──────────────────────────┐   groups + lists + membership
+        │     ┌──────────────────────────┐   per-board lists + membership
         │     │ tasklist FastAPI (this)   │   /api/plugins/tasklist/*
         │     └────────────┬─────────────┘
         │                  ▼   $HERMES_HOME/tasklist/lists.db   (overlay, human-only)
@@ -165,7 +165,7 @@ If you prefer a JSX + bundler workflow (esbuild / Vite / Rollup), build to a sin
 
 ## Limitations & notes
 
-- **Groups & lists are a human overlay.** They live in this plugin's own `lists.db`, not in `kanban.db`, so agents, workers and the CLI don't see them. They're for organizing your own view.
+- **Lists are a human overlay.** They live in this plugin's own `lists.db`, scoped per board, not in `kanban.db`, so agents, workers and the CLI don't see them. They're for organizing your own view. Boards themselves are the native Kanban boards.
 - **Read/write parity for task fields.** TaskList exposes what the kanban API exposes for tasks (no custom due dates etc.). The list buckets are the one thing it adds on top.
 - **`running` is not directly settable.** The backend reserves that transition for the dispatcher/claim path, so it's intentionally omitted from the status picker.
 - **Polling, not WebSocket.** For drop‑in robustness the list polls the cheap board endpoint and diffs the event id rather than holding the authenticated WebSocket. It's light and pauses on hidden tabs.
