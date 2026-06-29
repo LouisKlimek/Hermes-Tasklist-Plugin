@@ -231,6 +231,8 @@
     s = useState(null); var addTaskSec = s[0], setAddTaskSec = s[1];
     s = useState(""); var addTaskTitle = s[0], setAddTaskTitle = s[1];
     s = useState(null); var modalId = s[0], setModalId = s[1];
+    s = useState("details"); var modalTab = s[0], setModalTab = s[1];
+    useEffect(function () { setModalTab("details"); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
     s = useState(""); var titleDraft = s[0], setTitleDraft = s[1];
@@ -743,13 +745,26 @@
         h("textarea", { value: commentDraft, placeholder: "Add a comment\u2026 (Enter to submit, Shift+Enter for newline)", rows: 2, onChange: function (e) { setCommentDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addComment(id); } }, className: "font-courier", style: { width: "100%", resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.5, boxSizing: "border-box" } }),
         h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h("button", { onClick: function () { addComment(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 7, padding: "8px 18px", fontSize: 12.5, cursor: "pointer" } }, "Comment")));
 
-      var leftPane = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "18px 16px 22px" : "24px 30px 30px" } }, fields, h("div", { style: { paddingTop: isNarrow ? 18 : 24 } }, L));
-      var rightPane = h("div", { style: isNarrow
-          ? { flex: "0 0 auto", width: "100%", borderTop: "1px solid " + borderC, display: "flex", flexDirection: "column", maxHeight: "50vh", background: bgMuted }
-          : { flex: "0 0 380px", borderLeft: "1px solid " + borderC, display: "flex", flexDirection: "column", overflow: "hidden", background: bgMuted } },
-        h("div", { style: { padding: isNarrow ? "14px 16px" : "18px 20px", borderBottom: "1px solid " + borderC, fontSize: 12, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Activity"),
-        h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "16px 16px 8px" : "20px 20px 10px" } }, R),
-        composer);
+      var detailsScroll = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "16px 16px 22px" : "24px 30px 30px" } }, fields, h("div", { style: { paddingTop: isNarrow ? 18 : 24 } }, L));
+      var activityScroll = h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "16px 16px 8px" : "20px 20px 10px" } }, R);
+
+      var leftPane = detailsScroll;
+      var rightPane = h("div", { style: { flex: "0 0 380px", borderLeft: "1px solid " + borderC, display: "flex", flexDirection: "column", overflow: "hidden", background: bgMuted } },
+        h("div", { style: { padding: "18px 20px", borderBottom: "1px solid " + borderC, fontSize: 12, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Activity"),
+        activityScroll, composer);
+
+      function tabBtn(key, label) {
+        var on = modalTab === key;
+        return h("button", { onClick: function () { setModalTab(key); }, style: { flex: "1 1 0", background: "transparent", color: on ? "inherit" : muted, border: "none", borderBottom: "2px solid " + (on ? accent : "transparent"), padding: "12px 8px", fontSize: 13, fontWeight: on ? 700 : 500, cursor: "pointer" } }, label);
+      }
+
+      var body = isNarrow
+        ? h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" } },
+            h("div", { style: { display: "flex", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } }, tabBtn("details", "Details"), tabBtn("activity", "Activity" + (comments.length ? " (" + comments.length + ")" : ""))),
+            modalTab === "activity"
+              ? h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: "column", minHeight: 0, background: bgMuted } }, activityScroll, composer)
+              : detailsScroll)
+        : h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: "row", minHeight: 0, overflow: "hidden" } }, leftPane, rightPane);
 
       var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(1180px, 96vw)", height: isNarrow ? "100vh" : "94vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } },
         h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14, padding: isNarrow ? "14px 16px" : "20px 28px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
@@ -758,7 +773,7 @@
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
           h("button", { onClick: function () { setModalId(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
-        h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: isNarrow ? "column" : "row", minHeight: 0, overflow: isNarrow ? "auto" : "hidden" } }, leftPane, rightPane));
+        body);
       return h(Portal, { onClose: function () { setModalId(null); } }, h("div", { onClick: function () { setModalId(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel));
     }
 
