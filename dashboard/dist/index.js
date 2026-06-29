@@ -153,7 +153,9 @@
     var value = props.value, options = props.options || [], onChange = props.onChange, opts = props.opts || {};
     var st = useState(false); var open = st[0], setOpen = st[1];
     var ps = useState(null); var pos = ps[0], setPos = ps[1];
+    var qs = useState(""); var query = qs[0], setQuery = qs[1];
     var ref = useRef(null); var btnRef = useRef(null);
+    useEffect(function () { if (open) setQuery(""); }, [open]);
     useEffect(function () {
       if (!open) return;
       function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
@@ -166,18 +168,24 @@
     function toggle() {
       if (open) { setOpen(false); return; }
       var r = btnRef.current ? btnRef.current.getBoundingClientRect() : null;
-      if (r) { var up = (window.innerHeight - r.bottom) < 260; setPos({ left: r.left, width: r.width, top: up ? null : Math.round(r.bottom + 4), bottom: up ? Math.round(window.innerHeight - r.top + 4) : null }); }
+      if (r) { var up = (window.innerHeight - r.bottom) < (opts.search ? 340 : 260); setPos({ left: r.left, width: r.width, top: up ? null : Math.round(r.bottom + 4), bottom: up ? Math.round(window.innerHeight - r.top + 4) : null }); }
       setOpen(true);
     }
     var cur = null; for (var i = 0; i < options.length; i++) { if (String(options[i].value) === String(value)) { cur = options[i]; break; } }
     var anyDot = false; for (var j = 0; j < options.length; j++) { if (options[j].dot) { anyDot = true; break; } }
-    var menu = (open && pos) ? h("div", { style: { position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, minWidth: Math.max(pos.width, 150), maxHeight: 260, overflow: "auto", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.55)", zIndex: 2000, padding: 4 } },
-      options.map(function (o) {
-        var sel = String(o.value) === String(value);
-        return h("div", { key: o.value, onClick: function () { onChange(o.value); setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", background: sel ? accent + "22" : "transparent" }, onMouseEnter: function (e) { if (!sel) e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { if (!sel) e.currentTarget.style.background = "transparent"; } },
-          o.dot ? Dot(o.dot, 9) : (anyDot ? h("span", { style: { width: 9, flex: "0 0 auto" } }) : null),
-          h("span", null, o.label));
-      })) : null;
+    var ql = query.trim().toLowerCase();
+    var filtered = (opts.search && ql) ? options.filter(function (o) { return String(o.label).toLowerCase().indexOf(ql) !== -1 || String(o.value).toLowerCase().indexOf(ql) !== -1; }) : options;
+    function optRow(o) {
+      var sel = String(o.value) === String(value);
+      return h("div", { key: o.value, onClick: function () { onChange(o.value); setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", background: sel ? accent + "22" : "transparent" }, onMouseEnter: function (e) { if (!sel) e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { if (!sel) e.currentTarget.style.background = "transparent"; } },
+        o.dot ? Dot(o.dot, 9) : (anyDot ? h("span", { style: { width: 9, flex: "0 0 auto" } }) : null),
+        h("span", null, o.label));
+    }
+    var menu = (open && pos) ? h("div", { style: { position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, minWidth: Math.max(pos.width, opts.search ? 230 : 150), maxWidth: 380, maxHeight: 320, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.55)", zIndex: 2000 } },
+      opts.search ? h("div", { style: { padding: 6, borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+        h("input", { autoFocus: true, value: query, placeholder: "Search\u2026", onChange: function (e) { setQuery(e.target.value); }, onKeyDown: function (e) { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }, className: "font-courier", style: { width: "100%", boxSizing: "border-box", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "6px 8px", fontSize: 12.5 } })) : null,
+      h("div", { style: { overflow: "auto", padding: 4, flex: "1 1 auto" } },
+        filtered.length ? filtered.map(optRow) : h("div", { style: { padding: "8px 9px", fontSize: 12, color: muted } }, "No matches"))) : null;
     return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block", minWidth: 0, maxWidth: "100%", width: opts.full ? "100%" : undefined } },
       h("button", { ref: btnRef, type: "button", onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
         cur && cur.dot ? Dot(cur.dot, 9) : null,
@@ -235,6 +243,11 @@
     s = useState(null); var modalId = s[0], setModalId = s[1];
     s = useState("details"); var modalTab = s[0], setModalTab = s[1];
     s = useState(null); var confirmDel = s[0], setConfirmDel = s[1];
+    s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
+    s = useState(null); var draft = s[0], setDraft = s[1];
+    s = useState(false); var savingNew = s[0], setSavingNew = s[1];
+    s = useState(false); var confirmClose = s[0], setConfirmClose = s[1];
+    var draftInit = useRef(null);
     useEffect(function () { setModalTab("details"); setConfirmDel(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
@@ -353,7 +366,8 @@
 
     // ---- list / membership mutations ----------------------------------------
     function activate(slug, sc) { setBoard(slug); setScope(sc); setCollapsedBoards(function (n) { var x = Object.assign({}, n); x[slug] = false; return x; }); if (isNarrow) setSidebarOpen(false); }
-    function createList(name, slug) { name = (name || "").trim(); if (!name) return; var color = LIST_COLORS[treeFor(slug).lists.length % LIST_COLORS.length]; send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { setAdding(null); setAddName(""); loadTreeFor(slug); if (r && r.list) activate(slug, { type: "list", id: r.list.id }); }).catch(function (e) { setNotice("Could not create list: " + ((e && e.message) || "error")); }); }
+    function setListColor(l, slug, color) { send("PATCH", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), { color: color }).then(function () { loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
+    function createList(name, slug) { name = (name || "").trim(); if (!name) return; var color = LIST_COLORS[Math.floor(Math.random() * LIST_COLORS.length)]; send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { setAdding(null); setAddName(""); loadTreeFor(slug); if (r && r.list) activate(slug, { type: "list", id: r.list.id }); }).catch(function (e) { setNotice("Could not create list: " + ((e && e.message) || "error")); }); }
     function renameNode() { if (!editing) return; var nm = editName.trim(); var cur = editing; setEditing(null); if (!nm) return; send("PATCH", TLAPI + "/lists/" + encodeURIComponent(cur.id) + tlq(cur.board), { name: nm }).then(function () { loadTreeFor(cur.board); }).catch(function () { loadTreeFor(cur.board); }); }
     function deleteList(l, slug) { if (!window.confirm("Delete list \u201c" + l.name + "\u201d? Tasks stay on the board, they just leave this list.")) return; send("DELETE", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), null).then(function () { if (scope.type === "list" && scope.id === l.id) setScope({ type: "all" }); loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
     function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }); }); }); chain.then(function () { loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
@@ -365,6 +379,39 @@
         if (id && status && status !== "triage" && SETTABLE.indexOf(status) !== -1) p = p.then(function () { return send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { status: status }); });
         return p;
       }).then(function () { setAddTaskTitle(""); load(true); loadTreeFor(board); }).catch(function (e) { setNotice("Could not add task: " + ((e && e.message) || "error")); load(true); loadTreeFor(board); });
+    }
+
+    function openCreate() {
+      setNotice(null);
+      var init = { title: "", status: "todo", priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "" };
+      draftInit.current = JSON.stringify(init);
+      setDraft(init); setConfirmClose(false); setCreating(true);
+    }
+    function closeCreate() { setCreating(false); setDraft(null); setSavingNew(false); setConfirmClose(false); }
+    function requestClose() {
+      if (savingNew) return;
+      var dirty = !!(draft && draftInit.current && JSON.stringify(draft) !== draftInit.current);
+      if (dirty) setConfirmClose(true); else closeCreate();
+    }
+    function submitCreate() {
+      if (!draft || savingNew) return;
+      var title = (draft.title || "").trim();
+      if (!title) { setNotice("Please enter a title for the task."); return; }
+      setSavingNew(true); setNotice(null);
+      var d = draft;
+      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: false }).then(function (r) {
+        var id = r && r.task && r.task.id; if (!id) throw new Error("no id returned");
+        var patch = {};
+        if (d.status && d.status !== "triage" && SETTABLE.indexOf(d.status) !== -1) patch.status = d.status;
+        var pr = parseInt(d.priority, 10); if (!isNaN(pr)) patch.priority = pr;
+        if (d.assignee) patch.assignee = d.assignee;
+        if (d.body && d.body.trim()) patch.body = d.body;
+        var p = Object.keys(patch).length ? send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), patch) : Promise.resolve();
+        if (d.list_id) p = p.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: d.list_id }); });
+        return p.then(function () { return id; });
+      }).then(function (id) {
+        closeCreate(); load(true); loadTreeFor(board); loadAssignees();
+      }).catch(function (e) { setSavingNew(false); setNotice("Could not create task: " + ((e && e.message) || "error")); });
     }
 
     // ---- detail-popup mutations (parity with the native kanban drawer) ------
@@ -472,7 +519,13 @@
     }
     function listEntry(l, slug) {
       if (editing && editing.id === l.id) {
-        return h("div", { key: l.id, style: { padding: "2px 8px 2px 30px" } }, h("input", { autoFocus: true, value: editName, onChange: function (e) { setEditName(e.target.value); }, onBlur: renameNode, onKeyDown: function (e) { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setEditing(null); }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid " + accent, borderRadius: 4, padding: "3px 6px", fontSize: 12.5 } }));
+        return h("div", { key: l.id, style: { padding: "4px 8px 7px 30px", display: "flex", flexDirection: "column", gap: 7 } },
+          h("input", { autoFocus: true, value: editName, onChange: function (e) { setEditName(e.target.value); }, onBlur: renameNode, onKeyDown: function (e) { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setEditing(null); }, className: "font-courier", style: { width: "100%", boxSizing: "border-box", background: "transparent", color: "inherit", border: "1px solid " + accent, borderRadius: 4, padding: "3px 6px", fontSize: 12.5 } }),
+          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } },
+            LIST_COLORS.map(function (c) {
+              var on = String(l.color || "").toLowerCase() === c.toLowerCase();
+              return h("span", { key: c, title: c, onMouseDown: function (e) { e.preventDefault(); }, onClick: function (e) { e.stopPropagation(); setListColor(l, slug, c); }, style: { width: 16, height: 16, borderRadius: "50%", background: c, cursor: "pointer", flex: "0 0 auto", boxShadow: on ? ("0 0 0 2px var(--background, #111), 0 0 0 4px " + c) : "none", border: on ? "none" : "1px solid rgba(255,255,255,.25)" } });
+            })));
       }
       var btnStyle = { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", flex: "0 0 auto" };
       var trailing = h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, flex: "0 0 auto" } },
@@ -683,11 +736,11 @@
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
           parents.length ? parents.map(function (p) { return linkChip(p, function () { removeLink(p, id); }); }) : muteSpan("none"),
-          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) addLink(v, id); }, opts: { maxWidth: "240px" } }) : null),
+          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) addLink(v, id); }, opts: { maxWidth: "240px", search: true } }) : null),
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Children"),
           children.length ? children.map(function (c) { return linkChip(c, function () { removeLink(id, c); }); }) : muteSpan("none"),
-          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) addLink(id, v); }, opts: { maxWidth: "240px" } }) : null));
+          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) addLink(id, v); }, opts: { maxWidth: "240px", search: true } }) : null));
       L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
@@ -812,7 +865,9 @@
         h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
           isNarrow ? h("button", { onClick: function () { setSidebarOpen(!sidebarOpen); }, title: "Show/hide boards", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 7, padding: "5px 10px", fontSize: 12, cursor: "pointer", flex: "0 0 auto" } }, "\u2630 Boards") : null,
           h("h1", { style: { fontSize: isNarrow ? 16 : 18, fontWeight: 700, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, scopeTitle, activeBoardLabel ? h("span", { style: { fontSize: 12, fontWeight: 400, color: muted, marginLeft: 8 } }, "in " + activeBoardLabel) : null)),
-        h("span", { style: { fontSize: 12, color: muted, flex: "0 0 auto" } }, loading ? "Loading\u2026" : (scopeTasks.length + " task" + (scopeTasks.length === 1 ? "" : "s")))
+        h("div", { style: { display: "flex", alignItems: "center", gap: 12, flex: "0 0 auto" } },
+          h("span", { style: { fontSize: 12, color: muted } }, loading ? "Loading\u2026" : (scopeTasks.length + " task" + (scopeTasks.length === 1 ? "" : "s"))),
+          h("button", { onClick: openCreate, title: "Create a new task", style: { display: "inline-flex", alignItems: "center", gap: 6, background: accent, color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", flex: "0 0 auto" } }, h("span", { style: { fontSize: 15, lineHeight: 1, marginTop: -1 } }, "+"), "New task"))
       ),
       toolbar,
       notice ? h("div", { style: { fontSize: 12, color: "#fbbf24", border: "1px solid " + borderC, borderRadius: 6, padding: "8px 12px", marginBottom: 10 } }, notice) : null,
@@ -821,7 +876,60 @@
       sections.map(function (sec) { return sectionBlock(sec); })
     );
 
-    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal());
+    useEffect(function () {
+      if (!creating) return;
+      function onKey(e) { if (e.key === "Escape") { if (confirmClose) setConfirmClose(false); else requestClose(); } }
+      document.addEventListener("keydown", onKey);
+      return function () { document.removeEventListener("keydown", onKey); };
+    }, [creating, confirmClose, draft, savingNew]);
+
+    function createModal() {
+      if (!creating || !draft) return null;
+      function upd(patch) { setDraft(Object.assign({}, draft, patch)); }
+      function cfield(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
+      var statusOpts2 = SETTABLE.map(function (st) { return { value: st, label: statusMeta(st).label, dot: statusMeta(st).dot }; });
+      var prioOpts2 = [{ value: "3", label: "Urgent" }, { value: "2", label: "High" }, { value: "1", label: "Normal" }, { value: "0", label: "Low" }].map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(n).color }; });
+      var asgOpts2 = [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; }));
+      var canSave = !!(draft.title || "").trim() && !savingNew;
+
+      var header = h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: isNarrow ? "14px 16px" : "18px 26px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+        h("span", { style: { width: 9, height: 9, borderRadius: "50%", background: accent, flex: "0 0 auto" } }),
+        h("span", { style: { fontSize: isNarrow ? 16 : 18, fontWeight: 700, flex: "1 1 auto" } }, "New task"),
+        h("button", { onClick: requestClose, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20)));
+
+      var body = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "16px" : "24px 30px" } },
+        cfield("Title", h("input", { autoFocus: true, value: draft.title, onChange: function (e) { upd({ title: e.target.value }); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); submitCreate(); } }, placeholder: "What needs to be done?", className: "font-courier", style: { width: "100%", boxSizing: "border-box", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "10px 12px", fontSize: 15, fontWeight: 600 } })),
+        h("div", { style: { height: 22 } }),
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px" } },
+          cfield("Status", h(DotSelect, { value: draft.status, options: statusOpts2, onChange: function (v) { upd({ status: v }); }, opts: { full: true, lg: true } })),
+          cfield("Priority", h(DotSelect, { value: draft.priority, options: prioOpts2, onChange: function (v) { upd({ priority: v }); }, opts: { full: true, lg: true } })),
+          cfield("Assignee", h(DotSelect, { value: draft.assignee, options: asgOpts2, onChange: function (v) { upd({ assignee: v }); }, opts: { full: true, lg: true, search: true } })),
+          cfield("List", h(DotSelect, { value: draft.list_id, options: listOpts, onChange: function (v) { upd({ list_id: v }); }, opts: { full: true, lg: true } }))),
+        h("div", { style: { height: 22 } }),
+        cfield("Description", h("textarea", { value: draft.body, onChange: function (e) { upd({ body: e.target.value }); }, placeholder: "Add a description\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })));
+
+      var footer = h("div", { style: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, padding: isNarrow ? "12px 16px" : "16px 26px", borderTop: "1px solid " + borderC, flex: "0 0 auto" } },
+        h("span", { style: { fontSize: 11.5, color: muted, marginRight: "auto" } }, "Nothing is saved until you create it."),
+        h("button", { onClick: requestClose, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: "9px 18px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
+        h("button", { onClick: submitCreate, disabled: !canSave, style: { background: canSave ? accent : bgMuted, color: canSave ? "#fff" : muted, border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: canSave ? "pointer" : "not-allowed" } }, savingNew ? "Creating\u2026" : "Create task"));
+
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(680px, 96vw)", height: isNarrow ? "100vh" : "auto", maxHeight: isNarrow ? "100vh" : "92vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } }, header, body, footer);
+
+      var hasTitle = !!(draft.title || "").trim();
+      return h(Fragment, null,
+        h(Portal, { onClose: requestClose }, h("div", { onClick: requestClose, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel)),
+        confirmClose ? h(Portal, { onClose: function () { setConfirmClose(false); } },
+          h("div", { onClick: function () { setConfirmClose(false); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483600, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" } },
+            h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(440px, 96vw)", background: cardBg, border: "1px solid " + borderC, borderRadius: 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", padding: "22px 24px" } },
+              h("div", { style: { fontSize: 16, fontWeight: 700, marginBottom: 10 } }, "Discard this task?"),
+              h("div", { style: { fontSize: 13, lineHeight: 1.55, color: muted, marginBottom: 20 } }, hasTitle ? "You have unsaved details. Save this task, or discard it and close?" : "You have unsaved details. Discarding will close without creating the task. Add a title to save it."),
+              h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" } },
+                h("button", { onClick: function () { setConfirmClose(false); }, "data-tl-close": "1", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer" } }, "Keep editing"),
+                h("button", { onClick: closeCreate, style: { background: "transparent", color: "#f87171", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "Discard"),
+                h("button", { onClick: function () { setConfirmClose(false); submitCreate(); }, disabled: !hasTitle, title: hasTitle ? "" : "Add a title first", style: { background: hasTitle ? accent : bgMuted, color: hasTitle ? "#fff" : muted, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: hasTitle ? "pointer" : "not-allowed" } }, "Save task")))) ) : null);
+    }
+
+    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal());
   }
 
   window.__HERMES_PLUGINS__.register("tasklist", TaskListPage);
