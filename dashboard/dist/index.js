@@ -634,7 +634,7 @@
         h("textarea", { value: commentDraft, placeholder: "Add a comment\u2026 (Enter to submit, Shift+Enter for newline)", rows: 2, onChange: function (e) { setCommentDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addComment(id); } }, className: "font-courier", style: { width: "100%", resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.5, boxSizing: "border-box" } }),
         h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h("button", { onClick: function () { addComment(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 7, padding: "8px 18px", fontSize: 12.5, cursor: "pointer" } }, "Comment")));
 
-      var leftPane = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: "24px 30px 30px" } }, fields, h("div", null, L));
+      var leftPane = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: "24px 30px 30px" } }, fields, h("div", { style: { paddingTop: 24 } }, L));
       var rightPane = h("div", { style: { flex: "0 0 380px", borderLeft: "1px solid " + borderC, display: "flex", flexDirection: "column", overflow: "hidden", background: bgMuted } },
         h("div", { style: { padding: "18px 20px", borderBottom: "1px solid " + borderC, fontSize: 12, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Activity"),
         h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: "20px 20px 10px" } }, R),
