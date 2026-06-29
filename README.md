@@ -41,17 +41,30 @@ Built and tested against Hermes Agent `main` (≈ v0.14.x). The plugin only reli
 
 ## Installation
 
-Hermes discovers dashboard plugins by scanning for `<plugin>/dashboard/manifest.json`. Install into your user plugins directory:
+### Easiest — install from the dashboard (no terminal)
+
+Open the **Plugins** tab in the dashboard sidebar → **Install from GitHub / Git URL**, paste the repo and click **Install**:
+
+```
+https://github.com/LouisKlimek/Hermes-Tasklist-Plugin
+```
+
+(the shorthand `LouisKlimek/Hermes-Tasklist-Plugin` works too). Then click the **↻ rescan** icon next to the *Plugins* heading — or restart `hermes dashboard` — and hard‑refresh the browser (Ctrl+Shift+R). The **List** tab appears in the sidebar.
+
+- Leave **Enable after install** off — dashboard plugins are discovered via their `dashboard/manifest.json` and don't need a `plugins.enabled` entry (that gate only applies to lifecycle/tool plugins).
+- The repo root *is* the plugin (its `dashboard/manifest.json` sits at the top level), so the bare URL is enough. If you ever nest the plugin in a subfolder, append the path: `owner/repo#path/to/plugin`.
+
+### Manual — clone or extract
 
 ```bash
-# Option A — clone straight into the plugins directory
-git clone https://github.com/<your-user>/hermes-tasklist.git ~/.hermes/plugins/tasklist
+# clone straight into the plugins directory
+git clone https://github.com/LouisKlimek/Hermes-Tasklist-Plugin ~/.hermes/plugins/tasklist
 
-# Option B — download a release tarball and extract
+# …or extract a release tarball
 tar -xzf tasklist-plugin.tar.gz -C ~/.hermes/plugins/
 ```
 
-The final layout must be:
+Either way, the final layout must be:
 
 ```
 ~/.hermes/plugins/tasklist/
@@ -62,16 +75,9 @@ The final layout must be:
         └── index.js
 ```
 
-Then pick the new tab up **without** restarting the whole agent:
+Then rescan (the **↻** in the Plugins tab, or `curl http://127.0.0.1:9119/api/dashboard/plugins/rescan` with the dashboard's session token) **or** restart `hermes dashboard` (it rescans on start), and hard‑refresh the browser.
 
-```bash
-# force a rescan of dashboard plugins (needs the dashboard's session token)
-curl http://127.0.0.1:9119/api/dashboard/plugins/rescan
-```
-
-…or simply **restart `hermes dashboard`** (it rescans on start). Finally, hard‑refresh the browser (Ctrl+Shift+R). A **List** tab appears in the navigation.
-
-> Dashboard plugins do **not** need a `plugins.enabled` entry in `config.yaml` — that gate only applies to lifecycle/tool plugins. Dashboard plugins are discovered purely via their `dashboard/manifest.json`.
+> Plugin discovery is cached per dashboard process, so a browser refresh alone isn't enough — rescan or restart once after installing.
 
 ## Usage
 
