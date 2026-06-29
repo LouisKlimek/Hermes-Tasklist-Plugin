@@ -14,8 +14,8 @@ It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.
 
 ## Features
 
-- **Grouped list view** — group tasks by **Status**, **Assignee**, **Priority**, **Tenant**, **Project**, **custom List**, or nothing. Collapsible groups with task counts and a "done" rollup.
-- **Custom lists + drag & drop** — create your own named lists and **drag tasks between them** to organize work into buckets that don't exist in the kanban model (e.g. "This sprint", "Waiting on client", "Icebox"). Lists are persistent and per‑board, stored by a tiny companion backend. You can also set a task's list from the detail popup.
+- **Grouped list view** — inside any list, group tasks by **Status** (default, the kanban columns), **Assignee**, **Priority**, or nothing. Collapsible sections with task counts.
+- **Groups & lists with drag & drop** — a ClickUp‑style left sidebar where you create **groups** and, inside them, named **lists**. Open a list to see its tasks grouped by status; **drag a task onto a list** (or use the per‑task List dropdown) to move it; add tasks straight into a list with **+ Add task**. Groups/lists are persistent and per‑board, stored by a tiny companion backend.
 - **Sort & filter** — sort within each group by priority, created date, or title (asc/desc); full‑text search across title / id / body; filter by tenant and assignee; toggle archived tasks.
 - **Inline editing** — change a task's **status**, **priority**, and **assignee** right from the row, without opening anything. Edits route through the same validated state machine the board uses.
 - **ClickUp‑style task detail popup** — click any task to open a modal with the full picture: editable title, status/priority/assignee, the full body, the latest run summary, workspace and timing metadata, parent/child links (clickable), comment threads, and run history.
@@ -51,7 +51,6 @@ https://github.com/LouisKlimek/Hermes-Tasklist-Plugin
 
 (the shorthand `LouisKlimek/Hermes-Tasklist-Plugin` works too). Then click the **↻ rescan** icon next to the *Plugins* heading — or restart `hermes dashboard` — and hard‑refresh the browser (Ctrl+Shift+R). The **List** tab appears in the sidebar.
 
-- Leave **Enable after install** off — dashboard plugins are discovered via their `dashboard/manifest.json` and don't need a `plugins.enabled` entry (that gate only applies to lifecycle/tool plugins).
 - The repo root *is* the plugin (its `dashboard/manifest.json` sits at the top level), so the bare URL is enough. If you ever nest the plugin in a subfolder, append the path: `owner/repo#path/to/plugin`.
 
 ### Manual — clone or extract
@@ -86,14 +85,15 @@ Then rescan (the **↻** in the Plugins tab, or `curl http://127.0.0.1:9119/api/
 - Edit a task's **status**, **priority**, or **assignee** directly in its row.
 - **Click a task** to open the detail popup — edit the title (Enter or click‑away to save), update fields, read the body, comments, links, and run history. Close with the ✕, a click on the backdrop, or `Esc`.
 
-### Custom lists
+### Groups & lists (the left sidebar)
 
-Switch **Group → List** to organize tasks into your own named buckets:
+The List tab has a left sidebar, like ClickUp:
 
-- Type a name and hit **+ Add list** to create one (empty lists are kept).
-- **Drag a task** from one list onto another to move it; drop onto **No list** to remove it. You can also change a task's list from the **List** field in the detail popup.
-- Click a list's name to **rename** it; the ✕ on a list header **deletes** the list (tasks stay, they just leave that list).
-- Lists are saved per board and persist across reloads and browsers.
+- Click **+ Group** to create a top‑level group, and **+ List** (or the **+** on a group header) to create a list inside it. Lists can also live ungrouped at the top.
+- Click a list to **open** it — the main area shows that list's tasks grouped by **status** (To Do, Done, … as collapsible sections). **All tasks** and **No list** are always available at the top.
+- **Move a task into a list** two ways: drag the task row onto a list in the sidebar, or use the **List** dropdown on the task row (and in the detail popup). Drag a task onto **No list** to remove it.
+- Inside an open list, each status section has a **+ Add task** row that creates a new task on the board in that list and status.
+- Click a group's or list's name to **rename** it; the **✕** deletes it (deleting a group keeps its lists; deleting a list just detaches its tasks — the tasks stay on the board).
 
 ## How it works
 
@@ -105,7 +105,7 @@ Hermes TaskList is a thin client over the existing kanban backend, plus a tiny c
 └───────┬──────────────┬──────┘
         │              │  SDK.fetchJSON
         │              ▼
-        │     ┌──────────────────────────┐   custom lists + membership
+        │     ┌──────────────────────────┐   groups + lists + membership
         │     │ tasklist FastAPI (this)   │   /api/plugins/tasklist/*
         │     └────────────┬─────────────┘
         │                  ▼   $HERMES_HOME/tasklist/lists.db   (overlay, human-only)
@@ -165,7 +165,7 @@ If you prefer a JSX + bundler workflow (esbuild / Vite / Rollup), build to a sin
 
 ## Limitations & notes
 
-- **Custom lists are a human overlay.** They live in this plugin's own `lists.db`, not in `kanban.db`, so agents, workers and the CLI don't see them. They're for organizing your own view.
+- **Groups & lists are a human overlay.** They live in this plugin's own `lists.db`, not in `kanban.db`, so agents, workers and the CLI don't see them. They're for organizing your own view.
 - **Read/write parity for task fields.** TaskList exposes what the kanban API exposes for tasks (no custom due dates etc.). The list buckets are the one thing it adds on top.
 - **`running` is not directly settable.** The backend reserves that transition for the dispatcher/claim path, so it's intentionally omitted from the status picker.
 - **Polling, not WebSocket.** For drop‑in robustness the list polls the cheap board endpoint and diffs the event id rather than holding the authenticated WebSocket. It's light and pauses on hidden tabs.
