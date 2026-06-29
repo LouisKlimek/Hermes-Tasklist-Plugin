@@ -83,9 +83,9 @@
 
   function editSelect(value, onChange, options, title, opts) {
     opts = opts || {};
-    return h("span", { onClick: function (e) { e.stopPropagation(); } },
+    return h("span", { onClick: function (e) { e.stopPropagation(); }, style: opts.full ? { display: "block" } : null },
       h("select", { value: value, title: title || "", "aria-label": title || "", onChange: function (e) { onChange(e.target.value); }, className: "font-courier",
-        style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 4, padding: opts.pill ? "2px 7px" : "4px 8px", fontSize: opts.small ? 11 : 12, cursor: "pointer", maxWidth: opts.maxWidth || "none" } },
+        style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 6, padding: opts.lg ? "8px 11px" : (opts.pill ? "2px 7px" : "4px 8px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || "none" } },
         options.map(function (o) { return h("option", { key: o.value, value: o.value, style: { background: "var(--background,#111)", color: "var(--foreground,#eee)" } }, o.label); })));
   }
   function statusOptions(t) { var o = SETTABLE.map(function (st) { return { value: st, label: statusMeta(st).label }; }); if (SETTABLE.indexOf(t.status) === -1) o.unshift({ value: t.status, label: statusMeta(t.status).label }); return o; }
@@ -465,144 +465,149 @@
       var t = taskById[modalId]; if (!t) return null;
       var id = t.id;
       var d = detail[modalId]; var task = (d && d.task) || t; var pri = priorityBucket(t.priority);
-      var muteSpan = function (txt) { return h("span", { style: { fontSize: 12.5, color: muted, fontStyle: "italic" } }, txt); };
-      function field(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 110 } }, h("span", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", color: muted } }, lbl), ctrl); }
-      function readField(lbl, val) { return field(lbl, h("span", { style: { fontSize: 12.5, fontFamily: "var(--font-courier, monospace)" } }, val || "\u2014")); }
-      function secLabel(txt, right) { return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, h("span", { style: { fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: muted, fontWeight: 700 } }, txt), right || null); }
-      function section(label, right, body) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 8, paddingTop: 14, borderTop: "1px solid " + borderC } }, secLabel(label, right), body); }
+      var muteSpan = function (txt) { return h("span", { style: { fontSize: 13, color: muted, fontStyle: "italic" } }, txt); };
+      function field(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
+      function readField(lbl, val) { return field(lbl, h("span", { style: { fontSize: 13, lineHeight: 1.3 } }, val || "\u2014")); }
+      function secLabel(txt, right) { return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 } }, h("span", { style: { fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, txt), right || null); }
+      function section(label, right, body, opts) { opts = opts || {}; return h("div", { style: { padding: (opts.first ? "0" : "24px") + " 0 0", marginTop: opts.first ? 0 : 24, borderTop: opts.first ? "none" : "1px solid " + borderC } }, secLabel(label, right), body); }
       function linkChip(lid, onRemove) {
         var ct = taskById[lid]; var clickable = !!ct;
-        return h("span", { key: lid, style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "3px 4px 3px 9px", borderRadius: 999, border: "1px solid " + borderC } },
+        return h("span", { key: lid, style: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, padding: "5px 7px 5px 12px", borderRadius: 999, border: "1px solid " + borderC, background: bgMuted } },
           ct && ct.status ? Dot(statusMeta(ct.status).dot, 7) : null,
-          h("span", { onClick: function () { if (clickable) setModalId(lid); }, title: clickable ? (ct.title || lid) : lid, style: { cursor: clickable ? "pointer" : "default", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: clickable ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (ct.title || lid) : lid),
+          h("span", { onClick: function () { if (clickable) setModalId(lid); }, title: clickable ? (ct.title || lid) : lid, style: { cursor: clickable ? "pointer" : "default", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: clickable ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (ct.title || lid) : lid),
           h("button", { onClick: function (e) { e.stopPropagation(); onRemove(); }, title: "Unlink", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex" } }, XIcon(13)));
       }
 
       // ---- quick fields (status / priority / assignee / list + read-only) ----
-      var editRow = h("div", { style: { display: "flex", flexWrap: "wrap", gap: 16, padding: "14px 0", borderBottom: "1px solid " + borderC } },
-        field("Status", editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", {})),
-        field("Priority", editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", {})),
-        field("Assignee", editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", {})),
-        field("List", editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", {})),
+      var fields = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px", paddingBottom: 26, borderBottom: "1px solid " + borderC } },
+        field("Status", editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", { full: true, lg: true })),
+        field("Priority", editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", { full: true, lg: true })),
+        field("Assignee", editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { full: true, lg: true })),
+        field("List", editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { full: true, lg: true })),
         readField("Workspace", task.workspace_path ? (task.workspace_kind + " \u00b7 " + task.workspace_path) : task.workspace_kind),
         readField("Created by", task.created_by),
         task.tenant ? readField("Tenant", task.tenant) : null
       );
 
-      var rows = [];
-      if (!d) rows.push(h("div", { key: "ld", style: { fontSize: 12, color: muted } }, "Loading details\u2026"));
-      if (d && d._error) rows.push(h("div", { key: "er", style: { fontSize: 12, color: "#f87171" } }, "Failed to load full details (editing still works)."));
+      var L = [];
+      if (!d) L.push(h("div", { key: "ld", style: { fontSize: 12.5, color: muted, paddingTop: 18 } }, "Loading details\u2026"));
+      if (d && d._error) L.push(h("div", { key: "er", style: { fontSize: 12.5, color: "#f87171", paddingTop: 18 } }, "Failed to load full details (editing still works)."));
 
       // ---- Description (editable) --------------------------------------------
-      var descRight = descEdit
-        ? null
-        : h("button", { onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 11.5 } }, "edit");
+      var descRight = descEdit ? null : h("button", { onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 12 } }, "edit");
       var descBody = descEdit
-        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-            h("textarea", { autoFocus: true, value: descDraft, onChange: function (e) { setDescDraft(e.target.value); }, className: "font-courier", style: { width: "100%", minHeight: 110, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "8px 10px", fontSize: 13, lineHeight: 1.5 } }),
-            h("div", { style: { display: "flex", gap: 8 } },
-              h("button", { onClick: function () { saveDesc(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer" } }, "Save"),
-              h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer" } }, "Cancel")))
-        : (task.body ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.55 } }, task.body) : muteSpan("\u2014 no description \u2014"));
-      rows.push(h("div", { key: "desc" }, section("Description", descRight, descBody)));
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+            h("textarea", { autoFocus: true, value: descDraft, onChange: function (e) { setDescDraft(e.target.value); }, className: "font-courier", style: { width: "100%", minHeight: 150, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, boxSizing: "border-box" } }),
+            h("div", { style: { display: "flex", gap: 10 } },
+              h("button", { onClick: function () { saveDesc(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Save"),
+              h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Cancel")))
+        : (task.body ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.65 } }, task.body) : muteSpan("\u2014 no description \u2014"));
+      L.push(h("div", { key: "desc" }, section("Description", descRight, descBody, { first: true })));
 
       // ---- Dependencies ------------------------------------------------------
       var links = (d && d.links) || { parents: [], children: [] };
       var parents = links.parents || []; var children = links.children || [];
       var existing = parents.concat(children);
       function otherOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return x.id !== id && existing.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (x.title || x.id) + "  \u00b7  " + String(x.id).slice(0, 10) }; })); }
-      var depBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
-        h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 } },
-          h("span", { style: { fontSize: 12, color: muted, minWidth: 64 } }, "Parents"),
+      var depBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+        h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
+          h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
           parents.length ? parents.map(function (p) { return linkChip(p, function () { removeLink(p, id); }); }) : muteSpan("none"),
-          d ? editSelect("", function (v) { if (v) addLink(v, id); }, otherOpts("\u2014 add parent \u2014"), "Add parent", { small: true, maxWidth: "220px" }) : null),
-        h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 } },
-          h("span", { style: { fontSize: 12, color: muted, minWidth: 64 } }, "Children"),
+          d ? editSelect("", function (v) { if (v) addLink(v, id); }, otherOpts("\u2014 add parent \u2014"), "Add parent", { maxWidth: "240px" }) : null),
+        h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
+          h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Children"),
           children.length ? children.map(function (c) { return linkChip(c, function () { removeLink(id, c); }); }) : muteSpan("none"),
-          d ? editSelect("", function (v) { if (v) addLink(id, v); }, otherOpts("\u2014 add child \u2014"), "Add child", { small: true, maxWidth: "220px" }) : null));
-      rows.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
+          d ? editSelect("", function (v) { if (v) addLink(id, v); }, otherOpts("\u2014 add child \u2014"), "Add child", { maxWidth: "240px" }) : null));
+      L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
-      if (task.result) rows.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { whiteSpace: "pre-wrap", fontSize: 12.5, lineHeight: 1.5 } }, task.result))));
+      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 } }, task.result))));
 
       // ---- Attachments -------------------------------------------------------
       var atts = (d && d.attachments) || [];
-      var uploadBtn = h("label", { style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "4px 10px", fontSize: 11.5, cursor: "pointer" } }, "Upload file",
+      var uploadBtn = h("label", { style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 7, padding: "6px 13px", fontSize: 12, cursor: "pointer" } }, "Upload file",
         h("input", { type: "file", style: { display: "none" }, onChange: function (e) { var f = e.target.files && e.target.files[0]; uploadAttachment(id, f); e.target.value = ""; } }));
       var attBody = atts.length
-        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, atts.map(function (a, i) {
-            return h("div", { key: a.id || i, style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, atts.map(function (a, i) {
+            return h("div", { key: a.id || i, style: { display: "flex", alignItems: "center", gap: 12, fontSize: 13 } },
               h("button", { onClick: function () { downloadAttachment(a); }, title: "Download", style: { background: "transparent", border: "none", color: accent, cursor: "pointer", padding: 0, font: "inherit", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" } }, a.filename || a.id),
-              h("span", { style: { color: muted, fontSize: 11 } }, hsize(a.size)),
-              a.uploaded_by ? h("span", { style: { color: muted, fontSize: 11 } }, "\u00b7 " + a.uploaded_by) : null,
-              h("button", { onClick: function () { deleteAttachment(a.id, id); }, title: "Delete attachment", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", marginLeft: "auto" } }, XIcon(13)));
+              h("span", { style: { color: muted, fontSize: 11.5 } }, hsize(a.size)),
+              a.uploaded_by ? h("span", { style: { color: muted, fontSize: 11.5 } }, "\u00b7 " + a.uploaded_by) : null,
+              h("button", { onClick: function () { deleteAttachment(a.id, id); }, title: "Delete attachment", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", marginLeft: "auto" } }, XIcon(14)));
           }))
         : muteSpan("\u2014 no attachments \u2014");
-      rows.push(h("div", { key: "att" }, section("Attachments (" + atts.length + ")", uploadBtn, attBody)));
-
-      // ---- Comments ----------------------------------------------------------
-      var comments = (d && d.comments) || [];
-      var commentInput = h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
-        h("input", { value: commentDraft, placeholder: "Add a comment\u2026 (Enter to submit)", onChange: function (e) { setCommentDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); addComment(id); } }, className: "font-courier", style: { flex: "1 1 auto", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "6px 10px", fontSize: 12.5 } }),
-        h("button", { onClick: function () { addComment(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, cursor: "pointer" } }, "Comment"));
-      var commentList = comments.length
-        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, comments.map(function (c, i) {
-            return h("div", { key: c.id || i, style: { fontSize: 12.5, borderLeft: "2px solid " + borderC, paddingLeft: 12 } },
-              h("div", { style: { display: "flex", gap: 8, color: muted, fontSize: 11, marginBottom: 2 } }, h("span", null, c.author || c.created_by || "?"), h("span", null, ago(c.created_at, now) + " ago")),
-              h("div", { style: { whiteSpace: "pre-wrap" } }, c.body || c.text || ""));
-          }))
-        : muteSpan("\u2014 no comments \u2014");
-      rows.push(h("div", { key: "cm" }, section("Comments (" + comments.length + ")", null, h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, commentList, commentInput))));
-
-      // ---- Events ------------------------------------------------------------
-      var events = (d && d.events) || [];
-      if (events.length) {
-        var evBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, events.map(function (e, i) {
-          var pl = fmtPayload(e.payload);
-          return h("div", { key: e.id || i, style: { display: "flex", gap: 10, fontSize: 12, alignItems: "baseline" } },
-            h("span", { style: { width: 90, flex: "0 0 auto", color: muted } }, e.kind || "?"),
-            h("span", { style: { width: 56, flex: "0 0 auto", color: muted, fontSize: 11 } }, ago(e.created_at, now) + " ago"),
-            pl ? h("span", { style: { flex: "1 1 auto", minWidth: 0, fontFamily: "var(--font-courier, monospace)", fontSize: 11, color: muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: pl }, pl) : null);
-        }));
-        rows.push(h("div", { key: "ev" }, section("Events (" + events.length + ")", null, evBody)));
-      }
+      L.push(h("div", { key: "att" }, section("Attachments (" + atts.length + ")", uploadBtn, attBody)));
 
       // ---- Worker log --------------------------------------------------------
       var wl = workerLog[id];
-      var wlRight = h("button", { onClick: function () { loadWorkerLog(id); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 11.5 } }, wl ? "refresh" : "load");
+      var wlRight = h("button", { onClick: function () { loadWorkerLog(id); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 12 } }, wl ? "refresh" : "load");
       var wlBody = wl
-        ? (wl.loading ? muteSpan("Loading\u2026") : (wl.content ? h("pre", { style: { margin: 0, maxHeight: 220, overflow: "auto", background: bgMuted, border: "1px solid " + borderC, borderRadius: 6, padding: "8px 10px", fontSize: 11, fontFamily: "var(--font-courier, monospace)", whiteSpace: "pre-wrap" } }, wl.content) : muteSpan(wl.error ? "\u2014 could not load worker log \u2014" : "\u2014 no worker log yet \u2014")))
+        ? (wl.loading ? muteSpan("Loading\u2026") : (wl.content ? h("pre", { style: { margin: 0, maxHeight: 260, overflow: "auto", background: bgMuted, border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 11.5, fontFamily: "var(--font-courier, monospace)", whiteSpace: "pre-wrap" } }, wl.content) : muteSpan(wl.error ? "\u2014 could not load worker log \u2014" : "\u2014 no worker log yet \u2014")))
         : muteSpan("Click \u201cload\u201d to fetch the worker log.");
-      rows.push(h("div", { key: "wl" }, section("Worker log", wlRight, wlBody)));
+      L.push(h("div", { key: "wl" }, section("Worker log", wlRight, wlBody)));
 
-      // ---- Run history -------------------------------------------------------
+      // ---- Activity pane: events + run history + comments --------------------
+      var R = [];
+      var events = (d && d.events) || [];
+      if (events.length) {
+        var evBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 9 } }, events.map(function (e, i) {
+          var pl = fmtPayload(e.payload);
+          return h("div", { key: e.id || i, style: { display: "flex", flexDirection: "column", gap: 2 } },
+            h("div", { style: { display: "flex", gap: 8, alignItems: "baseline" } },
+              h("span", { style: { fontSize: 12.5, fontWeight: 600 } }, e.kind || "?"),
+              h("span", { style: { color: muted, fontSize: 11 } }, ago(e.created_at, now) + " ago")),
+            pl ? h("span", { style: { fontFamily: "var(--font-courier, monospace)", fontSize: 11, color: muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: pl }, pl) : null);
+        }));
+        R.push(h("div", { key: "ev" }, section("Events (" + events.length + ")", null, evBody, { first: R.length === 0 })));
+      }
       var runs = (d && d.runs) || [];
       if (runs.length) {
-        var runBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, runs.map(function (r, i) {
+        var runBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, runs.map(function (r, i) {
           var oc = r.outcome || r.status || "?";
           var ocColor = oc === "completed" ? "#34d399" : (oc === "failed" || r.error ? "#f87171" : muted);
           var dur = ""; if (r.started_at && r.ended_at) { var sec = Math.max(0, r.ended_at - r.started_at); dur = sec < 60 ? sec + "s" : (sec < 3600 ? Math.floor(sec / 60) + "m" : Math.floor(sec / 3600) + "h"); }
-          return h("div", { key: r.id || i, style: { fontSize: 12.5, borderLeft: "2px solid " + borderC, paddingLeft: 12 } },
+          return h("div", { key: r.id || i, style: { fontSize: 13, borderLeft: "2px solid " + borderC, paddingLeft: 14 } },
             h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
-              h("span", { style: { color: ocColor, fontFamily: "var(--font-courier, monospace)", fontSize: 12 } }, oc),
+              h("span", { style: { color: ocColor, fontFamily: "var(--font-courier, monospace)", fontSize: 12.5 } }, oc),
               r.profile ? h("span", { style: { color: muted } }, "@" + r.profile) : null,
               dur ? h("span", { style: { color: muted, fontSize: 11 } }, dur) : null,
               h("span", { style: { color: muted, fontSize: 11, marginLeft: "auto" } }, ago(r.ended_at || r.started_at, now) + " ago")),
-            r.summary ? h("div", { style: { marginTop: 2 } }, r.summary) : null,
-            r.error ? h("div", { style: { marginTop: 2, color: "#f87171", fontSize: 12 } }, r.error) : null);
+            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, r.summary) : null,
+            r.error ? h("div", { style: { marginTop: 4, color: "#f87171", fontSize: 12.5 } }, r.error) : null);
         }));
-        rows.push(h("div", { key: "runs" }, section("Run history (" + runs.length + ")", null, runBody)));
+        R.push(h("div", { key: "runs" }, section("Run history (" + runs.length + ")", null, runBody, { first: R.length === 0 })));
       }
+      var comments = (d && d.comments) || [];
+      var commentList = comments.length
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, comments.map(function (c, i) {
+            return h("div", { key: c.id || i, style: { display: "flex", gap: 10 } },
+              h("div", { style: { width: 26, height: 26, borderRadius: "50%", background: bgMuted, border: "1px solid " + borderC, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "0 0 auto", textTransform: "uppercase" } }, (c.author || c.created_by || "?").slice(0, 2)),
+              h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
+                h("div", { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 3 } }, h("span", { style: { fontSize: 12.5, fontWeight: 600 } }, c.author || c.created_by || "?"), h("span", { style: { color: muted, fontSize: 11 } }, ago(c.created_at, now) + " ago")),
+                h("div", { style: { fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" } }, c.body || c.text || "")));
+          }))
+        : muteSpan("\u2014 no comments \u2014");
+      R.push(h("div", { key: "cm" }, section("Comments (" + comments.length + ")", null, commentList, { first: R.length === 0 })));
 
-      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(780px, 94vw)", maxHeight: "90vh", overflow: "auto", background: cardBg, border: "1px solid " + borderC, borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,.55)", display: "flex", flexDirection: "column" } },
-        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 18px", borderBottom: "1px solid " + borderC, position: "sticky", top: 0, background: cardBg, zIndex: 1 } },
-          Dot(pri.color, 10),
+      var composer = h("div", { style: { borderTop: "1px solid " + borderC, padding: "14px 20px", display: "flex", flexDirection: "column", gap: 10 } },
+        h("textarea", { value: commentDraft, placeholder: "Add a comment\u2026 (Enter to submit, Shift+Enter for newline)", rows: 2, onChange: function (e) { setCommentDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addComment(id); } }, className: "font-courier", style: { width: "100%", resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.5, boxSizing: "border-box" } }),
+        h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h("button", { onClick: function () { addComment(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 7, padding: "8px 18px", fontSize: 12.5, cursor: "pointer" } }, "Comment")));
+
+      var leftPane = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: "24px 30px 30px" } }, fields, h("div", null, L));
+      var rightPane = h("div", { style: { flex: "0 0 380px", borderLeft: "1px solid " + borderC, display: "flex", flexDirection: "column", overflow: "hidden", background: bgMuted } },
+        h("div", { style: { padding: "18px 20px", borderBottom: "1px solid " + borderC, fontSize: 12, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Activity"),
+        h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: "20px 20px 10px" } }, R),
+        composer);
+
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(1180px, 96vw)", height: "94vh", overflow: "hidden", background: cardBg, border: "1px solid " + borderC, borderRadius: 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } },
+        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14, padding: "20px 28px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+          h("div", { style: { paddingTop: 8 } }, Dot(pri.color, 12)),
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
-            h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 6, padding: "4px 6px", fontSize: 16, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
-            h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "2px 6px" } }, t.id)),
-          h("button", { onClick: function () { setModalId(null); }, title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: 6, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(18))),
-        h("div", { style: { padding: "0 18px 18px" } }, editRow, h("div", { style: { display: "flex", flexDirection: "column", gap: 0 } }, rows)));
-      return h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 12px" } }, panel);
+            h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
+            h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
+          h("button", { onClick: function () { setModalId(null); }, title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
+        h("div", { style: { flex: "1 1 auto", display: "flex", minHeight: 0, overflow: "hidden" } }, leftPane, rightPane));
+      return h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "3vh 2vw" } }, panel);
     }
 
     // ---- page ---------------------------------------------------------------
