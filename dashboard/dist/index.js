@@ -106,11 +106,28 @@
   var _RDOM = (typeof window !== "undefined" && (window.ReactDOM || (SDK && SDK.ReactDOM) || (SDK && SDK.reactDOM))) || null;
   var _createPortal = (_RDOM && _RDOM.createPortal) || (React && React.createPortal) || null;
   function Portal(props) {
-    var elRef = useRef(null);
-    if (!elRef.current && typeof document !== "undefined") { var el = document.createElement("div"); el.setAttribute("data-tasklist-portal", ""); elRef.current = el; }
-    useEffect(function () { var node = elRef.current; if (!node || typeof document === "undefined") return; document.body.appendChild(node); return function () { try { document.body.removeChild(node); } catch (e) {} }; }, []);
-    if (_createPortal && elRef.current) return _createPortal(props.children, elRef.current);
-    return props.children; // graceful fallback: render inline
+    var holderRef = useRef(null);
+    var peRef = useRef(null);
+    if (!peRef.current && typeof document !== "undefined") { var el = document.createElement("div"); el.setAttribute("data-tasklist-portal", ""); peRef.current = el; }
+    useEffect(function () {
+      var pe = peRef.current; if (!pe || typeof document === "undefined") return;
+      if (!pe.parentNode) document.body.appendChild(pe);
+      if (!_createPortal) {
+        var holder = holderRef.current;
+        if (holder) {
+          // tolerate React removing the relocated child from the (now-empty)
+          // holder during unmount instead of throwing NotFoundError
+          if (!holder.__tlPatched) { var orig = holder.removeChild.bind(holder); holder.removeChild = function (c) { return (c && c.parentNode === holder) ? orig(c) : c; }; holder.__tlPatched = true; }
+          while (holder.firstChild) pe.appendChild(holder.firstChild);
+        }
+      }
+      return function () {
+        if (!_createPortal) { var holder2 = holderRef.current; if (holder2) { while (pe.firstChild) holder2.appendChild(pe.firstChild); } }
+        if (pe.parentNode) pe.parentNode.removeChild(pe);
+      };
+    }, []);
+    if (_createPortal && peRef.current) return _createPortal(props.children, peRef.current);
+    return h("div", { ref: holderRef, style: { display: "contents" } }, props.children);
   }
 
   function DotSelect(props) {
@@ -207,6 +224,17 @@
     s = useState({}); var workerLog = s[0], setWorkerLog = s[1];
     s = useState(""); var addParentSel = s[0], setAddParentSel = s[1];
     s = useState(""); var addChildSel = s[0], setAddChildSel = s[1];
+    s = useState(false); var isNarrow = s[0], setIsNarrow = s[1];
+    s = useState(true); var sidebarOpen = s[0], setSidebarOpen = s[1];
+
+    useEffect(function () {
+      if (typeof window === "undefined" || !window.matchMedia) return;
+      var mq = window.matchMedia("(max-width: 820px)");
+      function on() { setIsNarrow(mq.matches); setSidebarOpen(!mq.matches); }
+      on();
+      if (mq.addEventListener) mq.addEventListener("change", on); else if (mq.addListener) mq.addListener(on);
+      return function () { if (mq.removeEventListener) mq.removeEventListener("change", on); else if (mq.removeListener) mq.removeListener(on); };
+    }, []);
 
     var lastEvent = useRef(-1);
     var boardRef = useRef(board); boardRef.current = board;
@@ -295,7 +323,7 @@
     function saveTitle(t) { var v = titleDraft.trim(); if (!v || v === (t.title || "")) return; applyEdit(t, { title: v }, "title"); }
 
     // ---- list / membership mutations ----------------------------------------
-    function activate(slug, sc) { setBoard(slug); setScope(sc); setCollapsedBoards(function (n) { var x = Object.assign({}, n); x[slug] = false; return x; }); }
+    function activate(slug, sc) { setBoard(slug); setScope(sc); setCollapsedBoards(function (n) { var x = Object.assign({}, n); x[slug] = false; return x; }); if (isNarrow) setSidebarOpen(false); }
     function createList(name, slug) { name = (name || "").trim(); if (!name) return; var color = LIST_COLORS[treeFor(slug).lists.length % LIST_COLORS.length]; send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { setAdding(null); setAddName(""); loadTreeFor(slug); if (r && r.list) activate(slug, { type: "list", id: r.list.id }); }).catch(function (e) { setNotice("Could not create list: " + ((e && e.message) || "error")); }); }
     function renameNode() { if (!editing) return; var nm = editName.trim(); var cur = editing; setEditing(null); if (!nm) return; send("PATCH", TLAPI + "/lists/" + encodeURIComponent(cur.id) + tlq(cur.board), { name: nm }).then(function () { loadTreeFor(cur.board); }).catch(function () { loadTreeFor(cur.board); }); }
     function deleteList(l, slug) { if (!window.confirm("Delete list \u201c" + l.name + "\u201d? Tasks stay on the board, they just leave this list.")) return; send("DELETE", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), null).then(function () { if (scope.type === "list" && scope.id === l.id) setScope({ type: "all" }); loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
@@ -446,7 +474,9 @@
       ) : null;
       return h("div", { key: slug, style: { marginBottom: 2 } }, header, children);
     }
-    var sidebar = h("div", { style: { width: 240, flex: "0 0 240px", borderRight: "1px solid " + borderC, paddingRight: 10, marginRight: 14, alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 2, maxHeight: "calc(100vh - 120px)", overflow: "auto", position: "sticky", top: 0 } },
+    var sidebar = h("div", { style: isNarrow
+        ? { width: "100%", flex: "none", borderBottom: "1px solid " + borderC, paddingBottom: 8, marginBottom: 12, alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 2, maxHeight: "42vh", overflow: "auto" }
+        : { width: 240, flex: "0 0 240px", borderRight: "1px solid " + borderC, paddingRight: 10, marginRight: 14, alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 2, maxHeight: "calc(100vh - 120px)", overflow: "auto", position: "sticky", top: 0 } },
       h("div", { style: { padding: "2px 8px 6px", fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Boards"),
       boards.length ? boards.map(function (b) { return boardBlock(b); }) : h("div", { style: { padding: "8px", fontSize: 11.5, color: muted } }, "No boards found."),
       h("div", { style: { padding: "8px 8px 0", fontSize: 11, color: muted, lineHeight: 1.5 } }, "New boards are created in the ", h("b", null, "Kanban"), " tab. Open a board and click ", h("b", null, "+"), " to add a list, then drag tasks onto it or use the List dropdown.")
@@ -532,7 +562,7 @@
           h("span", { style: { fontWeight: 600, fontSize: 13, textTransform: groupBy === "status" ? "uppercase" : "none", letterSpacing: groupBy === "status" ? ".03em" : 0 } }, sec.label),
           h("span", { style: { fontSize: 11, color: muted } }, sec.items.length + (doneCount && groupBy !== "status" ? "  \u00b7  " + doneCount + " done" : ""))
         ),
-        isCollapsed ? null : h("div", null, columnHeader(), sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec))
+        isCollapsed ? null : h("div", { style: { overflowX: isNarrow ? "auto" : "visible" } }, h("div", { style: { minWidth: isNarrow ? 660 : "auto" } }, columnHeader(), sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec)))
       );
     }
 
@@ -673,29 +703,33 @@
         h("textarea", { value: commentDraft, placeholder: "Add a comment\u2026 (Enter to submit, Shift+Enter for newline)", rows: 2, onChange: function (e) { setCommentDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addComment(id); } }, className: "font-courier", style: { width: "100%", resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.5, boxSizing: "border-box" } }),
         h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h("button", { onClick: function () { addComment(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 7, padding: "8px 18px", fontSize: 12.5, cursor: "pointer" } }, "Comment")));
 
-      var leftPane = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: "24px 30px 30px" } }, fields, h("div", { style: { paddingTop: 24 } }, L));
-      var rightPane = h("div", { style: { flex: "0 0 380px", borderLeft: "1px solid " + borderC, display: "flex", flexDirection: "column", overflow: "hidden", background: bgMuted } },
-        h("div", { style: { padding: "18px 20px", borderBottom: "1px solid " + borderC, fontSize: 12, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Activity"),
-        h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: "20px 20px 10px" } }, R),
+      var leftPane = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "18px 16px 22px" : "24px 30px 30px" } }, fields, h("div", { style: { paddingTop: isNarrow ? 18 : 24 } }, L));
+      var rightPane = h("div", { style: isNarrow
+          ? { flex: "0 0 auto", width: "100%", borderTop: "1px solid " + borderC, display: "flex", flexDirection: "column", maxHeight: "50vh", background: bgMuted }
+          : { flex: "0 0 380px", borderLeft: "1px solid " + borderC, display: "flex", flexDirection: "column", overflow: "hidden", background: bgMuted } },
+        h("div", { style: { padding: isNarrow ? "14px 16px" : "18px 20px", borderBottom: "1px solid " + borderC, fontSize: 12, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, "Activity"),
+        h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "16px 16px 8px" : "20px 20px 10px" } }, R),
         composer);
 
-      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(1180px, 96vw)", height: "94vh", overflow: "hidden", background: cardBg, border: "1px solid " + borderC, borderRadius: 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } },
-        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14, padding: "20px 28px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
-          h("div", { style: { paddingTop: 8 } }, Dot(pri.color, 12)),
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(1180px, 96vw)", height: isNarrow ? "100vh" : "94vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } },
+        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14, padding: isNarrow ? "14px 16px" : "20px 28px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+          h("div", { style: { paddingTop: isNarrow ? 6 : 8 } }, Dot(pri.color, 12)),
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
-            h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
+            h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
           h("button", { onClick: function () { setModalId(null); }, title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
-        h("div", { style: { flex: "1 1 auto", display: "flex", minHeight: 0, overflow: "hidden" } }, leftPane, rightPane));
-      return h(Portal, null, h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "3vh 2vw" } }, panel));
+        h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: isNarrow ? "column" : "row", minHeight: 0, overflow: isNarrow ? "auto" : "hidden" } }, leftPane, rightPane));
+      return h(Portal, null, h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel));
     }
 
     // ---- page ---------------------------------------------------------------
     var activeBoardLabel = (function () { var b = boards.filter(function (x) { return x.slug === board; })[0]; return b ? (b.label || b.name || b.slug) : board; })();
     var main = h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
       h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
-        h("h1", { style: { fontSize: 18, fontWeight: 700, margin: 0 } }, scopeTitle, activeBoardLabel ? h("span", { style: { fontSize: 12, fontWeight: 400, color: muted, marginLeft: 8 } }, "in " + activeBoardLabel) : null),
-        h("span", { style: { fontSize: 12, color: muted } }, loading ? "Loading\u2026" : (scopeTasks.length + " task" + (scopeTasks.length === 1 ? "" : "s")))
+        h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
+          isNarrow ? h("button", { onClick: function () { setSidebarOpen(!sidebarOpen); }, title: "Show/hide boards", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 7, padding: "5px 10px", fontSize: 12, cursor: "pointer", flex: "0 0 auto" } }, "\u2630 Boards") : null,
+          h("h1", { style: { fontSize: isNarrow ? 16 : 18, fontWeight: 700, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, scopeTitle, activeBoardLabel ? h("span", { style: { fontSize: 12, fontWeight: 400, color: muted, marginLeft: 8 } }, "in " + activeBoardLabel) : null)),
+        h("span", { style: { fontSize: 12, color: muted, flex: "0 0 auto" } }, loading ? "Loading\u2026" : (scopeTasks.length + " task" + (scopeTasks.length === 1 ? "" : "s")))
       ),
       toolbar,
       notice ? h("div", { style: { fontSize: 12, color: "#fbbf24", border: "1px solid " + borderC, borderRadius: 6, padding: "8px 12px", marginBottom: 10 } }, notice) : null,
@@ -704,7 +738,7 @@
       sections.map(function (sec) { return sectionBlock(sec); })
     );
 
-    return h("div", { style: { display: "flex", alignItems: "flex-start", fontFamily: "inherit" } }, sidebar, main, modal());
+    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal());
   }
 
   window.__HERMES_PLUGINS__.register("tasklist", TaskListPage);
