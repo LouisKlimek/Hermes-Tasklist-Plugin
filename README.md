@@ -19,7 +19,7 @@ It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.
 - **Boards → lists with drag & drop** — a ClickUp‑style left sidebar where every native Kanban **board** is a folder. Create named **lists** inside a board, click one to open it, **drag a task onto a list** (or use the per‑task List dropdown) to move it, and add tasks straight into a list with **+ Add task**. Lists are persistent and per‑board, stored by a tiny companion backend.
 - **Sort & filter** — sort within each group by priority, created date, or title (asc/desc); full‑text search across title / id / body; filter by tenant and assignee; toggle archived tasks.
 - **Inline editing** — change a task's **status**, **priority**, and **assignee** right from the row, without opening anything. Edits route through the same validated state machine the board uses.
-- **ClickUp‑style task detail popup** — click any task to open a modal with the full picture: editable title, status/priority/assignee, the full body, the latest run summary, workspace and timing metadata, parent/child links (clickable), comment threads, and run history.
+- **Full task detail popup** — click any task to open a modal with the same capabilities as the native kanban drawer: editable title, status/priority/assignee/list, workspace and created‑by, an **editable description**, **dependencies** (add/remove parents & children), result, **attachments** (upload / download / delete), **comments** (read and post), the events log, the worker log (on demand), and run history.
 - **Live updates** — the list polls the board's append‑only event log and refreshes only when something actually changed; pauses automatically when the browser tab is hidden.
 - **Multi‑board aware** — a board switcher appears automatically when you have more than one Kanban board.
 - **Zero dependencies, zero build** — a single pre‑built IIFE bundle that uses the Hermes Plugin SDK. Drop the folder in and refresh.
@@ -86,7 +86,7 @@ Then **restart `hermes dashboard`** and hard‑refresh the browser.
 - Open the **List** tab.
 - Use the toolbar to pick how tasks are **grouped** and **sorted**, search, and filter by tenant/assignee.
 - Edit a task's **status**, **priority**, or **assignee** directly in its row.
-- **Click a task** to open the detail popup — edit the title (Enter or click‑away to save), update fields, read the body, comments, links, and run history. Close with the ✕, a click on the backdrop, or `Esc`.
+- **Click a task** to open the detail popup — it mirrors the native kanban drawer: edit the title (Enter or click‑away to save) and status/priority/assignee/list, edit the **description**, add/remove **parent & child dependencies**, upload/download/delete **attachments**, **post comments**, and read the events log, worker log, and run history. Close with the ✕, a click on the backdrop, or `Esc`.
 
 ### Boards & lists (the left sidebar)
 
@@ -177,8 +177,6 @@ If you prefer a JSX + bundler workflow (esbuild / Vite / Rollup), build to a sin
 ## Roadmap
 
 - Reorder lists by dragging their headers
-- Inline comment composing (`POST /tasks/:id/comments`)
-- Create / link subtasks from the popup
 - Saved views (persisted group/sort/filter presets)
 - Optional WebSocket live stream instead of polling
 

@@ -46,6 +46,8 @@
   function ago(e, now) { if (e == null) return ""; var d = Math.max(0, (now || Math.floor(Date.now() / 1000)) - e); if (d < 60) return d + "s"; if (d < 3600) return Math.floor(d / 60) + "m"; if (d < 86400) return Math.floor(d / 3600) + "h"; if (d < 2592000) return Math.floor(d / 86400) + "d"; return Math.floor(d / 2592000) + "mo"; }
   function whenFull(e) { if (e == null) return ""; try { return new Date(e * 1000).toLocaleString(); } catch (x) { return String(e); } }
   function asgName(x) { return typeof x === "string" ? x : (x && (x.name || x.assignee)) || ""; }
+  function hsize(n) { if (n == null) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
+  function fmtPayload(p) { if (p == null || p === "") return ""; var str; try { str = typeof p === "string" ? p : JSON.stringify(p); } catch (e) { str = String(p); } return str; }
 
   function Caret(open, sz) { sz = sz || 12; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round", style: { transition: "transform .12s", transform: open ? "rotate(90deg)" : "none", flex: "0 0 auto" } }, h("polyline", { points: "9 6 15 12 9 18" })); }
   function Dot(c, s) { return h("span", { style: { display: "inline-block", width: (s || 8) + "px", height: (s || 8) + "px", borderRadius: "50%", background: c, flex: "0 0 auto" } }); }
@@ -58,6 +60,20 @@
 
   function getJSON(p) { return SDK.fetchJSON(p); }
   function send(method, p, body) { return SDK.fetchJSON(p, { method: method, headers: { "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) }); }
+  // Raw authenticated fetch for multipart upload + binary download, where
+  // fetchJSON's JSON assumptions don't fit. Mirrors the dashboard's own auth:
+  // loopback injects window.__HERMES_SESSION_TOKEN__ (sent as a header); the
+  // gated/OAuth mode authenticates via a same-origin session cookie. Also
+  // honours a reverse-proxy base path.
+  function authFetch(p, opts) {
+    opts = opts || {};
+    var base = window.__HERMES_BASE_PATH__ || "";
+    var headers = Object.assign({}, opts.headers || {});
+    var tok = window.__HERMES_SESSION_TOKEN__;
+    if (tok) headers["X-Hermes-Session-Token"] = tok;
+    opts.headers = headers; opts.credentials = "same-origin";
+    return fetch(base + p, opts);
+  }
 
   var muted = "var(--muted-foreground, #9ca3af)";
   var borderC = "var(--border, #2a2a2a)";
@@ -124,6 +140,12 @@
     s = useState(""); var titleDraft = s[0], setTitleDraft = s[1];
     s = useState({ children: {}, parents: {} }); var edges = s[0], setEdges = s[1];
     s = useState({}); var expandedTasks = s[0], setExpandedTasks = s[1];
+    s = useState(false); var descEdit = s[0], setDescEdit = s[1];
+    s = useState(""); var descDraft = s[0], setDescDraft = s[1];
+    s = useState(""); var commentDraft = s[0], setCommentDraft = s[1];
+    s = useState({}); var workerLog = s[0], setWorkerLog = s[1];
+    s = useState(""); var addParentSel = s[0], setAddParentSel = s[1];
+    s = useState(""); var addChildSel = s[0], setAddChildSel = s[1];
 
     var lastEvent = useRef(-1);
     var boardRef = useRef(board); boardRef.current = board;
@@ -195,7 +217,7 @@
     }, [bq, detail]);
     useEffect(function () { if (modalId) loadDetail(modalId, false); }, [modalId]); // eslint-disable-line
     useEffect(function () {
-      if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? (t.title || "") : "");
+      if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? (t.title || "") : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
       function onKey(e) { if (e.key === "Escape") setModalId(null); }
       window.addEventListener("keydown", onKey); return function () { window.removeEventListener("keydown", onKey); };
     }, [modalId]); // eslint-disable-line
@@ -226,6 +248,17 @@
         return p;
       }).then(function () { setAddTaskTitle(""); load(true); loadTreeFor(board); }).catch(function (e) { setNotice("Could not add task: " + ((e && e.message) || "error")); load(true); loadTreeFor(board); });
     }
+
+    // ---- detail-popup mutations (parity with the native kanban drawer) ------
+    function reloadTask(id) { loadDetail(id, true); load(true); }
+    function addComment(id) { var b = commentDraft.trim(); if (!b) return; setNotice(null); send("POST", KAPI + "/tasks/" + encodeURIComponent(id) + "/comments" + bq(), { body: b }).then(function () { setCommentDraft(""); reloadTask(id); }).catch(function (e) { setNotice("Could not add comment: " + ((e && e.message) || "error")); }); }
+    function saveDesc(id) { setNotice(null); send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { body: descDraft }).then(function () { setDescEdit(false); reloadTask(id); }).catch(function (e) { setNotice("Could not save description: " + ((e && e.message) || "error")); }); }
+    function addLink(parent, child) { setNotice(null); send("POST", KAPI + "/links" + bq(), { parent_id: parent, child_id: child }).then(function () { setAddParentSel(""); setAddChildSel(""); loadDetail(child, true); loadDetail(parent, true); load(true); loadEdges(); }).catch(function (e) { setNotice("Could not link tasks: " + ((e && e.message) || "error")); }); }
+    function removeLink(parent, child) { setNotice(null); var q = bq(); q += (q ? "&" : "?") + "parent_id=" + encodeURIComponent(parent) + "&child_id=" + encodeURIComponent(child); send("DELETE", KAPI + "/links" + q, null).then(function () { loadDetail(parent, true); loadDetail(child, true); load(true); loadEdges(); }).catch(function () { loadDetail(modalId, true); loadEdges(); }); }
+    function uploadAttachment(id, file) { if (!file) return; var fd = new FormData(); fd.append("file", file); setNotice(null); authFetch(KAPI + "/tasks/" + encodeURIComponent(id) + "/attachments" + bq(), { method: "POST", body: fd }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then(function () { reloadTask(id); }).catch(function (e) { setNotice("Upload failed: " + ((e && e.message) || "error")); }); }
+    function downloadAttachment(a) { setNotice(null); authFetch(KAPI + "/attachments/" + encodeURIComponent(a.id) + bq()).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); }).then(function (b) { var u = URL.createObjectURL(b); var el = document.createElement("a"); el.href = u; el.download = a.filename || String(a.id); document.body.appendChild(el); el.click(); el.remove(); setTimeout(function () { URL.revokeObjectURL(u); }, 1500); }).catch(function (e) { setNotice("Download failed: " + ((e && e.message) || "error")); }); }
+    function deleteAttachment(attId, id) { setNotice(null); send("DELETE", KAPI + "/attachments/" + encodeURIComponent(attId) + bq(), null).then(function () { reloadTask(id); }).catch(function () { reloadTask(id); }); }
+    function loadWorkerLog(id) { setWorkerLog(function (m) { var n = Object.assign({}, m); n[id] = { loading: true }; return n; }); getJSON(KAPI + "/tasks/" + encodeURIComponent(id) + "/log" + bq()).then(function (r) { setWorkerLog(function (m) { var n = Object.assign({}, m); n[id] = { content: (r && r.content) || "", loaded: true }; return n; }); }).catch(function () { setWorkerLog(function (m) { var n = Object.assign({}, m); n[id] = { content: "", loaded: true, error: true }; return n; }); }); }
 
     // ---- scope --------------------------------------------------------------
     function inScope(t) { var lid = activeMembership[t.id]; var inAny = lid && liveListIds[lid]; if (scope.type === "unassigned") return !inAny; if (scope.type === "list") return lid === scope.id; return true; }
@@ -430,40 +463,145 @@
     function modal() {
       if (!modalId) return null;
       var t = taskById[modalId]; if (!t) return null;
+      var id = t.id;
       var d = detail[modalId]; var task = (d && d.task) || t; var pri = priorityBucket(t.priority);
-      function field(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 120 } }, h("span", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", color: muted } }, lbl), ctrl); }
+      var muteSpan = function (txt) { return h("span", { style: { fontSize: 12.5, color: muted, fontStyle: "italic" } }, txt); };
+      function field(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 110 } }, h("span", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", color: muted } }, lbl), ctrl); }
+      function readField(lbl, val) { return field(lbl, h("span", { style: { fontSize: 12.5, fontFamily: "var(--font-courier, monospace)" } }, val || "\u2014")); }
+      function secLabel(txt, right) { return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, h("span", { style: { fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: muted, fontWeight: 700 } }, txt), right || null); }
+      function section(label, right, body) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 8, paddingTop: 14, borderTop: "1px solid " + borderC } }, secLabel(label, right), body); }
+      function linkChip(lid, onRemove) {
+        var ct = taskById[lid]; var clickable = !!ct;
+        return h("span", { key: lid, style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "3px 4px 3px 9px", borderRadius: 999, border: "1px solid " + borderC } },
+          ct && ct.status ? Dot(statusMeta(ct.status).dot, 7) : null,
+          h("span", { onClick: function () { if (clickable) setModalId(lid); }, title: clickable ? (ct.title || lid) : lid, style: { cursor: clickable ? "pointer" : "default", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: clickable ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (ct.title || lid) : lid),
+          h("button", { onClick: function (e) { e.stopPropagation(); onRemove(); }, title: "Unlink", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex" } }, XIcon(13)));
+      }
+
+      // ---- quick fields (status / priority / assignee / list + read-only) ----
       var editRow = h("div", { style: { display: "flex", flexWrap: "wrap", gap: 16, padding: "14px 0", borderBottom: "1px solid " + borderC } },
         field("Status", editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", {})),
         field("Priority", editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", {})),
         field("Assignee", editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", {})),
         field("List", editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", {})),
-        t.tenant ? field("Tenant", h("span", { style: { fontSize: 12, fontFamily: "var(--font-courier, monospace)" } }, t.tenant)) : null
+        readField("Workspace", task.workspace_path ? (task.workspace_kind + " \u00b7 " + task.workspace_path) : task.workspace_kind),
+        readField("Created by", task.created_by),
+        task.tenant ? readField("Tenant", task.tenant) : null
       );
+
       var rows = [];
-      if (task.body) rows.push(h("div", { key: "body", style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.55 } }, task.body));
-      else if (!d) rows.push(h("div", { key: "ld", style: { fontSize: 12, color: muted } }, "Loading details\u2026"));
+      if (!d) rows.push(h("div", { key: "ld", style: { fontSize: 12, color: muted } }, "Loading details\u2026"));
       if (d && d._error) rows.push(h("div", { key: "er", style: { fontSize: 12, color: "#f87171" } }, "Failed to load full details (editing still works)."));
-      if (task.latest_summary) rows.push(h("div", { key: "sum", style: { fontSize: 12.5, color: muted, borderLeft: "2px solid " + borderC, paddingLeft: 12 } }, h("div", { style: { textTransform: "uppercase", letterSpacing: ".05em", fontSize: 10, marginBottom: 3 } }, "Latest run summary"), task.latest_summary));
-      var meta = [];
-      if (task.workspace_path) meta.push("workspace: " + task.workspace_kind + " \u00b7 " + task.workspace_path); else if (task.workspace_kind) meta.push("workspace: " + task.workspace_kind);
-      if (task.created_by) meta.push("by " + task.created_by);
-      meta.push("created " + whenFull(task.created_at)); if (task.started_at) meta.push("started " + whenFull(task.started_at)); if (task.completed_at) meta.push("done " + whenFull(task.completed_at));
-      rows.push(h("div", { key: "meta", style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)" } }, meta.join("   \u00b7   ")));
-      var links = d && d.links;
-      if (links && (((links.parents || []).length) || ((links.children || []).length))) {
-        function ll(title, arr) { if (!arr || !arr.length) return null; return h("div", { style: { fontSize: 12.5, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } }, h("span", { style: { color: muted } }, title), arr.map(function (x, i) { var lid = x.id || x.child_id || x.parent_id; var lt = x.title || lid || "?"; return h("span", { key: i, onClick: function () { if (lid && taskById[lid]) setModalId(lid); }, style: { cursor: lid && taskById[lid] ? "pointer" : "default", textDecoration: lid && taskById[lid] ? "underline dotted" : "none" } }, x.status ? Dot(statusMeta(x.status).dot, 7) : null, " ", lt); })); }
-        rows.push(h("div", { key: "links", style: { display: "flex", flexDirection: "column", gap: 6 } }, ll("Parents", links.parents), ll("Children", links.children)));
-      }
+
+      // ---- Description (editable) --------------------------------------------
+      var descRight = descEdit
+        ? null
+        : h("button", { onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 11.5 } }, "edit");
+      var descBody = descEdit
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+            h("textarea", { autoFocus: true, value: descDraft, onChange: function (e) { setDescDraft(e.target.value); }, className: "font-courier", style: { width: "100%", minHeight: 110, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "8px 10px", fontSize: 13, lineHeight: 1.5 } }),
+            h("div", { style: { display: "flex", gap: 8 } },
+              h("button", { onClick: function () { saveDesc(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer" } }, "Save"),
+              h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer" } }, "Cancel")))
+        : (task.body ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.55 } }, task.body) : muteSpan("\u2014 no description \u2014"));
+      rows.push(h("div", { key: "desc" }, section("Description", descRight, descBody)));
+
+      // ---- Dependencies ------------------------------------------------------
+      var links = (d && d.links) || { parents: [], children: [] };
+      var parents = links.parents || []; var children = links.children || [];
+      var existing = parents.concat(children);
+      function otherOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return x.id !== id && existing.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (x.title || x.id) + "  \u00b7  " + String(x.id).slice(0, 10) }; })); }
+      var depBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+        h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 } },
+          h("span", { style: { fontSize: 12, color: muted, minWidth: 64 } }, "Parents"),
+          parents.length ? parents.map(function (p) { return linkChip(p, function () { removeLink(p, id); }); }) : muteSpan("none"),
+          d ? editSelect("", function (v) { if (v) addLink(v, id); }, otherOpts("\u2014 add parent \u2014"), "Add parent", { small: true, maxWidth: "220px" }) : null),
+        h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 } },
+          h("span", { style: { fontSize: 12, color: muted, minWidth: 64 } }, "Children"),
+          children.length ? children.map(function (c) { return linkChip(c, function () { removeLink(id, c); }); }) : muteSpan("none"),
+          d ? editSelect("", function (v) { if (v) addLink(id, v); }, otherOpts("\u2014 add child \u2014"), "Add child", { small: true, maxWidth: "220px" }) : null));
+      rows.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
+
+      // ---- Result ------------------------------------------------------------
+      if (task.result) rows.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { whiteSpace: "pre-wrap", fontSize: 12.5, lineHeight: 1.5 } }, task.result))));
+
+      // ---- Attachments -------------------------------------------------------
+      var atts = (d && d.attachments) || [];
+      var uploadBtn = h("label", { style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "4px 10px", fontSize: 11.5, cursor: "pointer" } }, "Upload file",
+        h("input", { type: "file", style: { display: "none" }, onChange: function (e) { var f = e.target.files && e.target.files[0]; uploadAttachment(id, f); e.target.value = ""; } }));
+      var attBody = atts.length
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, atts.map(function (a, i) {
+            return h("div", { key: a.id || i, style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
+              h("button", { onClick: function () { downloadAttachment(a); }, title: "Download", style: { background: "transparent", border: "none", color: accent, cursor: "pointer", padding: 0, font: "inherit", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" } }, a.filename || a.id),
+              h("span", { style: { color: muted, fontSize: 11 } }, hsize(a.size)),
+              a.uploaded_by ? h("span", { style: { color: muted, fontSize: 11 } }, "\u00b7 " + a.uploaded_by) : null,
+              h("button", { onClick: function () { deleteAttachment(a.id, id); }, title: "Delete attachment", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", marginLeft: "auto" } }, XIcon(13)));
+          }))
+        : muteSpan("\u2014 no attachments \u2014");
+      rows.push(h("div", { key: "att" }, section("Attachments (" + atts.length + ")", uploadBtn, attBody)));
+
+      // ---- Comments ----------------------------------------------------------
       var comments = (d && d.comments) || [];
-      if (comments.length) rows.push(h("div", { key: "cm", style: { display: "flex", flexDirection: "column", gap: 6 } }, h("div", { style: { textTransform: "uppercase", letterSpacing: ".05em", fontSize: 10, color: muted } }, "Comments (" + comments.length + ")"), comments.map(function (c, i) { return h("div", { key: i, style: { fontSize: 12.5, borderLeft: "2px solid " + borderC, paddingLeft: 12 } }, h("span", { style: { color: muted, marginRight: 6 } }, (c.author || c.created_by || "?") + ":"), c.body || c.text || ""); })));
-      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(760px, 94vw)", maxHeight: "88vh", overflow: "auto", background: cardBg, border: "1px solid " + borderC, borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,.55)", display: "flex", flexDirection: "column" } },
+      var commentInput = h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+        h("input", { value: commentDraft, placeholder: "Add a comment\u2026 (Enter to submit)", onChange: function (e) { setCommentDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); addComment(id); } }, className: "font-courier", style: { flex: "1 1 auto", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "6px 10px", fontSize: 12.5 } }),
+        h("button", { onClick: function () { addComment(id); }, style: { background: accent, color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, cursor: "pointer" } }, "Comment"));
+      var commentList = comments.length
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, comments.map(function (c, i) {
+            return h("div", { key: c.id || i, style: { fontSize: 12.5, borderLeft: "2px solid " + borderC, paddingLeft: 12 } },
+              h("div", { style: { display: "flex", gap: 8, color: muted, fontSize: 11, marginBottom: 2 } }, h("span", null, c.author || c.created_by || "?"), h("span", null, ago(c.created_at, now) + " ago")),
+              h("div", { style: { whiteSpace: "pre-wrap" } }, c.body || c.text || ""));
+          }))
+        : muteSpan("\u2014 no comments \u2014");
+      rows.push(h("div", { key: "cm" }, section("Comments (" + comments.length + ")", null, h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, commentList, commentInput))));
+
+      // ---- Events ------------------------------------------------------------
+      var events = (d && d.events) || [];
+      if (events.length) {
+        var evBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, events.map(function (e, i) {
+          var pl = fmtPayload(e.payload);
+          return h("div", { key: e.id || i, style: { display: "flex", gap: 10, fontSize: 12, alignItems: "baseline" } },
+            h("span", { style: { width: 90, flex: "0 0 auto", color: muted } }, e.kind || "?"),
+            h("span", { style: { width: 56, flex: "0 0 auto", color: muted, fontSize: 11 } }, ago(e.created_at, now) + " ago"),
+            pl ? h("span", { style: { flex: "1 1 auto", minWidth: 0, fontFamily: "var(--font-courier, monospace)", fontSize: 11, color: muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: pl }, pl) : null);
+        }));
+        rows.push(h("div", { key: "ev" }, section("Events (" + events.length + ")", null, evBody)));
+      }
+
+      // ---- Worker log --------------------------------------------------------
+      var wl = workerLog[id];
+      var wlRight = h("button", { onClick: function () { loadWorkerLog(id); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 11.5 } }, wl ? "refresh" : "load");
+      var wlBody = wl
+        ? (wl.loading ? muteSpan("Loading\u2026") : (wl.content ? h("pre", { style: { margin: 0, maxHeight: 220, overflow: "auto", background: bgMuted, border: "1px solid " + borderC, borderRadius: 6, padding: "8px 10px", fontSize: 11, fontFamily: "var(--font-courier, monospace)", whiteSpace: "pre-wrap" } }, wl.content) : muteSpan(wl.error ? "\u2014 could not load worker log \u2014" : "\u2014 no worker log yet \u2014")))
+        : muteSpan("Click \u201cload\u201d to fetch the worker log.");
+      rows.push(h("div", { key: "wl" }, section("Worker log", wlRight, wlBody)));
+
+      // ---- Run history -------------------------------------------------------
+      var runs = (d && d.runs) || [];
+      if (runs.length) {
+        var runBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, runs.map(function (r, i) {
+          var oc = r.outcome || r.status || "?";
+          var ocColor = oc === "completed" ? "#34d399" : (oc === "failed" || r.error ? "#f87171" : muted);
+          var dur = ""; if (r.started_at && r.ended_at) { var sec = Math.max(0, r.ended_at - r.started_at); dur = sec < 60 ? sec + "s" : (sec < 3600 ? Math.floor(sec / 60) + "m" : Math.floor(sec / 3600) + "h"); }
+          return h("div", { key: r.id || i, style: { fontSize: 12.5, borderLeft: "2px solid " + borderC, paddingLeft: 12 } },
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+              h("span", { style: { color: ocColor, fontFamily: "var(--font-courier, monospace)", fontSize: 12 } }, oc),
+              r.profile ? h("span", { style: { color: muted } }, "@" + r.profile) : null,
+              dur ? h("span", { style: { color: muted, fontSize: 11 } }, dur) : null,
+              h("span", { style: { color: muted, fontSize: 11, marginLeft: "auto" } }, ago(r.ended_at || r.started_at, now) + " ago")),
+            r.summary ? h("div", { style: { marginTop: 2 } }, r.summary) : null,
+            r.error ? h("div", { style: { marginTop: 2, color: "#f87171", fontSize: 12 } }, r.error) : null);
+        }));
+        rows.push(h("div", { key: "runs" }, section("Run history (" + runs.length + ")", null, runBody)));
+      }
+
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(780px, 94vw)", maxHeight: "90vh", overflow: "auto", background: cardBg, border: "1px solid " + borderC, borderRadius: 12, boxShadow: "0 24px 60px rgba(0,0,0,.55)", display: "flex", flexDirection: "column" } },
         h("div", { style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 18px", borderBottom: "1px solid " + borderC, position: "sticky", top: 0, background: cardBg, zIndex: 1 } },
           Dot(pri.color, 10),
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 6, padding: "4px 6px", fontSize: 16, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "2px 6px" } }, t.id)),
           h("button", { onClick: function () { setModalId(null); }, title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: 6, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(18))),
-        h("div", { style: { padding: "0 18px 18px" } }, editRow, h("div", { style: { display: "flex", flexDirection: "column", gap: 14, paddingTop: 14 } }, rows)));
+        h("div", { style: { padding: "0 18px 18px" } }, editRow, h("div", { style: { display: "flex", flexDirection: "column", gap: 0 } }, rows)));
       return h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 12px" } }, panel);
     }
 
