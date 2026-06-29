@@ -156,7 +156,7 @@
       if (!open) return;
       function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
       function onKey(e) { if (e.key === "Escape") setOpen(false); }
-      function onScroll() { setOpen(false); }
+      function onScroll(e) { if (e && e.target && ref.current && ref.current.contains && ref.current.contains(e.target)) return; setOpen(false); }
       document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
       window.addEventListener("scroll", onScroll, true); window.addEventListener("resize", onScroll);
       return function () { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", onScroll); };
@@ -176,7 +176,7 @@
           o.dot ? Dot(o.dot, 9) : (anyDot ? h("span", { style: { width: 9, flex: "0 0 auto" } }) : null),
           h("span", null, o.label));
       })) : null;
-    return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block" } },
+    return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block", minWidth: 0, maxWidth: "100%", width: opts.full ? "100%" : undefined } },
       h("button", { ref: btnRef, type: "button", onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
         cur && cur.dot ? Dot(cur.dot, 9) : null,
         h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, cur ? cur.label : String(value || "")),
