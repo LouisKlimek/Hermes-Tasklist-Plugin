@@ -21,6 +21,7 @@
   var SDK = window.__HERMES_PLUGIN_SDK__;
   var React = SDK.React;
   var h = React.createElement;
+  var Fragment = React.Fragment;
   var hooks = SDK.hooks;
   var useState = hooks.useState, useEffect = hooks.useEffect, useMemo = hooks.useMemo, useCallback = hooks.useCallback, useRef = hooks.useRef;
 
@@ -38,6 +39,7 @@
   };
   var SETTABLE = ["triage", "todo", "scheduled", "ready", "blocked", "review", "done"];
   var LIST_COLORS = ["#38bdf8", "#34d399", "#fbbf24", "#f87171", "#c084fc", "#fb923c", "#818cf8", "#2dd4bf"];
+  var COLW = { status: 112, priority: 96, assignee: 132, list: 124, age: 46 };
 
   function statusMeta(s) { return STATUS[s] || { label: s || "?", dot: "#71717a" }; }
   function priorityBucket(p) { p = p == null ? 0 : p; if (p >= 3) return { label: "Urgent", color: "#f87171" }; if (p === 2) return { label: "High", color: "#fb923c" }; if (p === 1) return { label: "Normal", color: "#38bdf8" }; return { label: "Low", color: "#71717a" }; }
@@ -52,6 +54,7 @@
   function CommentIcon() { return h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" })); }
   function XIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("line", { x1: 18, y1: 6, x2: 6, y2: 18 }), h("line", { x1: 6, y1: 6, x2: 18, y2: 18 })); }
   function PlusIcon(sz) { sz = sz || 14; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" }, h("line", { x1: 12, y1: 5, x2: 12, y2: 19 }), h("line", { x1: 5, y1: 12, x2: 19, y2: 12 })); }
+  function PencilIcon(sz) { sz = sz || 12; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M12 20h9" }), h("path", { d: "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" })); }
 
   function getJSON(p) { return SDK.fetchJSON(p); }
   function send(method, p, body) { return SDK.fetchJSON(p, { method: method, headers: { "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) }); }
@@ -71,6 +74,16 @@
   }
   function statusOptions(t) { var o = SETTABLE.map(function (st) { return { value: st, label: statusMeta(st).label }; }); if (SETTABLE.indexOf(t.status) === -1) o.unshift({ value: t.status, label: statusMeta(t.status).label }); return o; }
   function prioOptions(t) { var b = [{ value: "3", label: "Urgent" }, { value: "2", label: "High" }, { value: "1", label: "Normal" }, { value: "0", label: "Low" }]; var c = t.priority == null ? 0 : t.priority; if ([0, 1, 2, 3].indexOf(c) === -1) b.unshift({ value: String(c), label: "P" + c }); return b; }
+
+  function cell(w, content, right) { return h("div", { style: { width: w + "px", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: right ? "flex-end" : "flex-start", overflow: "hidden" } }, content); }
+  function colHeaderLbl(txt) { return h("span", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", color: muted, whiteSpace: "nowrap" } }, txt); }
+  function columnHeader() {
+    return h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", borderTop: "1px solid " + borderC } },
+      h("div", { style: { flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 10 } },
+        h("span", { style: { width: 12, flex: "0 0 auto" } }), h("span", { style: { width: 11, flex: "0 0 auto" } }), h("span", { style: { width: 8, flex: "0 0 auto" } }), colHeaderLbl("Name")),
+      h("div", { style: { flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8 } },
+        cell(COLW.status, colHeaderLbl("Status")), cell(COLW.priority, colHeaderLbl("Priority")), cell(COLW.assignee, colHeaderLbl("Assignee")), cell(COLW.list, colHeaderLbl("List")), cell(COLW.age, colHeaderLbl("Age"), true)));
+  }
 
   // =========================================================================
   function TaskListPage() {
@@ -109,6 +122,8 @@
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
     s = useState(""); var titleDraft = s[0], setTitleDraft = s[1];
+    s = useState({ children: {}, parents: {} }); var edges = s[0], setEdges = s[1];
+    s = useState({}); var expandedTasks = s[0], setExpandedTasks = s[1];
 
     var lastEvent = useRef(-1);
     var boardRef = useRef(board); boardRef.current = board;
@@ -140,6 +155,12 @@
         .catch(function (e) { setError((e && e.message) || "Failed to load board"); setLoading(false); });
     }, [bq, showArchived]);
     useEffect(function () { if (board) load(false); }, [load, board]);
+
+    var loadEdges = useCallback(function () {
+      if (!boardRef.current) return;
+      getJSON(TLAPI + "/links" + tlq(boardRef.current)).then(function (r) { setEdges({ children: (r && r.children) || {}, parents: (r && r.parents) || {} }); }).catch(function () { setEdges({ children: {}, parents: {} }); });
+    }, []);
+    useEffect(function () { if (board) loadEdges(); }, [board, data, loadEdges]);
 
     useEffect(function () {
       var t = setInterval(function () {
@@ -224,24 +245,32 @@
       });
     }, [tasks, scope, activeMembership, liveListIds, search, fAssignee]);
 
+    // ---- subtask nesting helpers --------------------------------------------
+    function hasKids(t) { var c = edges.children[t.id]; if (!c) return false; for (var i = 0; i < c.length; i++) if (taskById[c[i]]) return true; return false; }
+    function childrenOf(t) { var c = edges.children[t.id] || []; var out = []; c.forEach(function (cid) { var ct = taskById[cid]; if (ct) out.push(ct); }); out.sort(function (a, b) { var ap = a.priority == null ? 0 : a.priority, bp = b.priority == null ? 0 : b.priority; if (ap !== bp) return bp - ap; return (a.created_at || 0) - (b.created_at || 0); }); return out; }
+
     // ---- sections -----------------------------------------------------------
     var sections = useMemo(function () {
       var dir = sortDir === "asc" ? 1 : -1;
       function cmp(a, b) { var av, bv; if (sortBy === "title") { av = (a.title || "").toLowerCase(); bv = (b.title || "").toLowerCase(); } else if (sortBy === "created") { av = a.created_at || 0; bv = b.created_at || 0; } else { av = a.priority == null ? 0 : a.priority; bv = b.priority == null ? 0 : b.priority; } if (av < bv) return -1 * dir; if (av > bv) return 1 * dir; return 0; }
+      // hide tasks that are a child of another task currently in view (they
+      // nest under that parent instead of appearing at top level)
+      var idset = {}; scopeTasks.forEach(function (t) { idset[t.id] = 1; });
+      var top = scopeTasks.filter(function (t) { var ps = edges.parents[t.id]; if (!ps) return true; for (var i = 0; i < ps.length; i++) if (idset[ps[i]]) return false; return true; });
       if (groupBy === "status") {
         var cols = STATUS_ORDER.filter(function (c) { return c !== "archived" || showArchived; });
-        var byCol = {}; scopeTasks.forEach(function (t) { (byCol[t.status] || (byCol[t.status] = [])).push(t); });
+        var byCol = {}; top.forEach(function (t) { (byCol[t.status] || (byCol[t.status] = [])).push(t); });
         var out = [];
         cols.forEach(function (c) { var items = (byCol[c] || []).slice().sort(cmp); if (items.length || c === "todo") { var m = statusMeta(c); out.push({ key: c, label: m.label, dot: m.dot, items: items, status: c }); } });
         return out;
       }
       function keyOf(t) { if (groupBy === "assignee") return t.assignee || "\u0000Unassigned"; if (groupBy === "priority") return "p:" + (t.priority == null ? 0 : t.priority); return "\u0000All"; }
-      var map = {}; scopeTasks.forEach(function (t) { var k = keyOf(t); (map[k] || (map[k] = [])).push(t); });
+      var map = {}; top.forEach(function (t) { var k = keyOf(t); (map[k] || (map[k] = [])).push(t); });
       var keys = Object.keys(map);
       if (groupBy === "priority") keys.sort(function (a, b) { return parseInt(b.slice(2), 10) - parseInt(a.slice(2), 10); });
       else keys.sort(function (a, b) { var ae = a.charCodeAt(0) === 0, be = b.charCodeAt(0) === 0; if (ae !== be) return ae ? 1 : -1; return a.localeCompare(b); });
       return keys.map(function (k) { var label, dot; if (groupBy === "priority") { var pb = priorityBucket(parseInt(k.slice(2), 10)); label = pb.label + " (P" + k.slice(2) + ")"; dot = pb.color; } else if (k.charCodeAt(0) === 0) { label = k.slice(1); dot = "#52525b"; } else { label = k; dot = "#64748b"; } return { key: k, label: label, dot: dot, items: map[k].slice().sort(cmp), status: null }; });
-    }, [scopeTasks, groupBy, sortBy, sortDir, showArchived]);
+    }, [scopeTasks, groupBy, sortBy, sortDir, showArchived, edges]);
 
     // ======================== SIDEBAR =======================================
     function addInput(placeholder, onSubmit) {
@@ -270,13 +299,17 @@
       if (editing && editing.id === l.id) {
         return h("div", { key: l.id, style: { padding: "2px 8px 2px 30px" } }, h("input", { autoFocus: true, value: editName, onChange: function (e) { setEditName(e.target.value); }, onBlur: renameNode, onKeyDown: function (e) { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setEditing(null); }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid " + accent, borderRadius: 4, padding: "3px 6px", fontSize: 12.5 } }));
       }
-      var del = h("button", { onClick: function (e) { e.stopPropagation(); deleteList(l, slug); }, title: "Delete list", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", flex: "0 0 auto" } }, XIcon(13));
+      var btnStyle = { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", flex: "0 0 auto" };
+      var trailing = h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, flex: "0 0 auto" } },
+        h("button", { onClick: function (e) { e.stopPropagation(); setEditing({ id: l.id, board: slug }); setEditName(l.name); }, title: "Rename list", style: btnStyle }, PencilIcon(12)),
+        h("button", { onClick: function (e) { e.stopPropagation(); deleteList(l, slug); }, title: "Delete list", style: btnStyle }, XIcon(13))
+      );
       return h("div", { key: l.id },
         entryRow({
           label: l.name, dot: l.color || "#64748b", active: board === slug && scope.type === "list" && scope.id === l.id, count: listCount(slug, l.id), indent: 30,
           onClick: function () { if (editing) { return; } activate(slug, { type: "list", id: l.id }); },
           dropKey: slug === board ? l.id : null, onDrop: function (id) { moveToList(id, l.id); },
-          trailing: del
+          trailing: trailing
         }));
     }
     function boardBlock(b) {
@@ -325,26 +358,46 @@
     function badge(text, color) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, lineHeight: 1, padding: "3px 7px", borderRadius: 999, border: "1px solid " + borderC, whiteSpace: "nowrap" } }, color ? Dot(color, 7) : null, text); }
     var listOpts = [{ value: "", label: "No list" }].concat(activeLists.map(function (x) { return { value: x.id, label: x.name }; }));
 
-    function taskRow(t) {
+    function taskRow(t, depth) {
+      depth = depth || 0;
       var pri = priorityBucket(t.priority); var prog = t.progress;
+      var kids = hasKids(t);
+      var expanded = !!expandedTasks[t.id];
+      var disc = kids
+        ? h("span", { onClick: function (e) { e.stopPropagation(); setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", color: muted, cursor: "pointer", flex: "0 0 auto" } }, Caret(expanded, 12))
+        : h("span", { style: { display: "inline-block", width: 12, flex: "0 0 auto" } });
       return h("div", {
         key: t.id, draggable: true, onClick: function () { setModalId(t.id); },
         onDragStart: function (e) { dragRef.current = t.id; setDragId(t.id); try { e.dataTransfer.setData("text/plain", t.id); e.dataTransfer.effectAllowed = "move"; } catch (x) {} },
         onDragEnd: function () { dragRef.current = null; setDragId(null); setDropList(null); },
-        style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderTop: "1px solid " + borderC, cursor: "grab", fontSize: 13, opacity: dragId === t.id ? .4 : 1 },
+        style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", paddingLeft: (14 + depth * 22) + "px", borderTop: "1px solid " + borderC, cursor: "grab", fontSize: 13, opacity: dragId === t.id ? .4 : 1 },
         onMouseEnter: function (e) { e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { e.currentTarget.style.background = "transparent"; }
       },
-        h("span", { style: { display: "inline-flex", color: muted } }, Grip()),
-        Dot(pri.color, 8),
-        h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.title || "(untitled)"),
-        prog ? badge(prog.done + "/" + prog.total, prog.done >= prog.total && prog.total > 0 ? "#34d399" : "#fbbf24") : null,
-        (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null),
-        editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", { pill: true, small: true }),
-        editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", { pill: true, small: true }),
-        editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { pill: true, small: true, maxWidth: "130px" }),
-        editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { pill: true, small: true, maxWidth: "120px" }),
-        h("span", { style: { fontSize: 11, color: muted, width: 30, textAlign: "right", flex: "0 0 auto" } }, ago(t.created_at, now))
+        h("div", { style: { flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 10 } },
+          disc,
+          h("span", { style: { display: "inline-flex", color: muted } }, Grip()),
+          Dot(pri.color, 8),
+          h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.title || "(untitled)"),
+          prog ? badge(prog.done + "/" + prog.total, prog.done >= prog.total && prog.total > 0 ? "#34d399" : "#fbbf24") : null,
+          (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null)
+        ),
+        h("div", { style: { flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8 } },
+          cell(COLW.status, editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", { pill: true, small: true })),
+          cell(COLW.priority, editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", { pill: true, small: true })),
+          cell(COLW.assignee, editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { pill: true, small: true, maxWidth: (COLW.assignee - 4) + "px" })),
+          cell(COLW.list, editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { pill: true, small: true, maxWidth: (COLW.list - 4) + "px" })),
+          cell(COLW.age, h("span", { style: { fontSize: 11, color: muted } }, ago(t.created_at, now)), true)
+        )
       );
+    }
+
+    function taskTree(t, depth, visited) {
+      var row = taskRow(t, depth);
+      if (visited[t.id] || !expandedTasks[t.id]) return row;
+      var kids = childrenOf(t);
+      if (!kids.length) return row;
+      var v = Object.assign({}, visited); v[t.id] = 1;
+      return h(Fragment, { key: t.id + "_w" }, row, kids.map(function (ch) { return taskTree(ch, depth + 1, v); }));
     }
 
     function addTaskRow(sec) {
@@ -369,7 +422,7 @@
           h("span", { style: { fontWeight: 600, fontSize: 13, textTransform: groupBy === "status" ? "uppercase" : "none", letterSpacing: groupBy === "status" ? ".03em" : 0 } }, sec.label),
           h("span", { style: { fontSize: 11, color: muted } }, sec.items.length + (doneCount && groupBy !== "status" ? "  \u00b7  " + doneCount + " done" : ""))
         ),
-        isCollapsed ? null : h("div", null, sec.items.map(function (t) { return taskRow(t); }), addTaskRow(sec))
+        isCollapsed ? null : h("div", null, columnHeader(), sec.items.map(function (t) { return taskTree(t, 0, {}); }), addTaskRow(sec))
       );
     }
 

@@ -67,6 +67,16 @@ def _board(b: Optional[str]) -> str:
     return b or "default"
 
 
+def _kanban_db_path(slug: str) -> Path:
+    """Locate the kanban.db for a board (default board lives at the root)."""
+    home = _hermes_home()
+    if slug and slug != "default":
+        p = home / "kanban" / "boards" / slug / "kanban.db"
+        if p.exists():
+            return p
+    return home / "kanban.db"
+
+
 # --------------------------------------------------------------------------- #
 # request models
 # --------------------------------------------------------------------------- #
@@ -112,6 +122,33 @@ def get_lists(board: Optional[str] = Query(None)):
         return {"lists": lists, "membership": membership}
     finally:
         c.close()
+
+
+@router.get("/links")
+def get_links(board: Optional[str] = Query(None)):
+    """Parent/child task links for the board, read straight from kanban.db.
+
+    Lets the list view nest subtasks under their parent. Best-effort and
+    read-only: any failure (db missing, schema change) returns empty maps and
+    the UI just shows a flat list.
+    """
+    slug = _board(board)
+    path = _kanban_db_path(slug)
+    children: dict = {}
+    parents: dict = {}
+    try:
+        if path.exists():
+            kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                for row in kc.execute("SELECT parent_id, child_id FROM task_links"):
+                    pid, cid = row[0], row[1]
+                    children.setdefault(pid, []).append(cid)
+                    parents.setdefault(cid, []).append(pid)
+            finally:
+                kc.close()
+    except Exception:
+        pass
+    return {"children": children, "parents": parents}
 
 
 @router.post("/lists")
