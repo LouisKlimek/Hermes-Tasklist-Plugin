@@ -129,7 +129,53 @@ Hermes TaskList is a thin client over the existing kanban backend, plus a tiny c
         ~/.hermes/kanban.db   (shared with the board, CLI, and workers)
 ```
 
-Task edits go through the kanban API's validated `PATCH /tasks/:id` (so invalid status transitions surface a clear message instead of corrupting state). **Lists** live in a separate `lists.db` owned by this plugin and are a *human organizational overlay* — agents, workers and the `hermes kanban` CLI don't see them. Membership is keyed by kanban task id and scoped per board. For **subtask nesting**, the plugin reads the kanban board's `task_links` table read-only (best-effort; if it can't, the list just renders flat).
+Task edits go through the kanban API's validated `PATCH /tasks/:id` (so invalid status transitions surface a clear message instead of corrupting state). **Lists** live in a separate `lists.db` owned by this plugin and are a *human organizational overlay* — the core kanban, workers and the `hermes kanban` CLI don't see them. Membership is keyed by kanban task id and scoped per board. For **subtask nesting**, the plugin reads the kanban board's `task_links` table read-only (best-effort; if it can't, the list just renders flat).
+
+Agents *can* opt into the lists, though — see below.
+
+## Automatic sorting (zero‑config)
+
+The plugin ships a second half that files tasks into lists **by itself** — no orchestrator wiring, no agent prompt changes, no provider keys. It's a Hermes *hook plugin* (`plugin.yaml` + `__init__.py` next to `dashboard/`) that registers the kanban lifecycle hooks `kanban_task_claimed` and `kanban_task_completed`. When a task first moves through the board it:
+
+1. reads the task title/body straight from `kanban.db` (read‑only),
+2. reads the board's existing lists,
+3. asks your **active model** via host‑owned `ctx.llm.complete_structured()` for the best‑fitting existing list — or a short new one if none fits,
+4. writes the membership (creating the list if needed) into the same `lists.db` the dashboard reads.
+
+Enable it once:
+
+```bash
+hermes plugins enable tasklist
+```
+
+After that, new tasks land in the right list (or a freshly‑created one) as they're claimed — the List view reflects it on its next poll.
+
+Notes & honest caveats:
+
+- **No `created` hook exists in Hermes**, so the earliest signal is `claimed` — tasks are sorted when work *starts* on them, not the instant they're created. `completed` acts as a backstop.
+- It reuses existing lists by case‑insensitive name (never duplicates) and only creates a list when the model decides none fit.
+- It's **best‑effort**: any failure (model unavailable in your build's worker‑hook context, db hiccup) is swallowed — it can never break a board transition. If `ctx.llm` isn't wired in that context on your Hermes version, auto‑sort simply no‑ops and the manual lists keep working.
+- **Cost**: one small structured model call per first‑seen task. On a busy board pin a cheap model under `plugins.entries.tasklist.llm.allowed_models` in `config.yaml`.
+
+### Manual / explicit alternative — the CLI
+
+If you'd rather have the orchestrator assign lists explicitly (or script it), the plugin also includes `dashboard/tasklist_cli.py`, which writes the same `lists.db` with **no session token**. Run it with the same `HERMES_HOME` as `hermes dashboard`:
+
+```bash
+# see existing lists on a board (reuse, don't duplicate)
+python3 dashboard/tasklist_cli.py lists --board opportunity-discovery
+
+# file a task into a list, creating it only if nothing fits
+python3 dashboard/tasklist_cli.py assign \
+    --board opportunity-discovery --task t_b1c00dbf --list "Backend" --create
+
+# remove a task from any list
+python3 dashboard/tasklist_cli.py unassign --board opportunity-discovery --task t_b1c00dbf
+```
+
+`assign` resolves `--list` by id then case‑insensitive name (so repeats reuse, not duplicate). `--board` is the board slug the dashboard uses (default board is `default`). This is handy as an escape hatch or for deterministic, rule‑based assignment from your own scripts; for hands‑off operation prefer the automatic hook above.
+
+
 
 ## Configuration
 
