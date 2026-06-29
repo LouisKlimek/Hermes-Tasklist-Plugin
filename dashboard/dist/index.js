@@ -100,30 +100,53 @@
         style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 6, padding: opts.lg ? "8px 11px" : (opts.pill ? "2px 7px" : "4px 8px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || "none" } },
         options.map(function (o) { return h("option", { key: o.value, value: o.value, style: { background: "var(--background,#111)", color: "var(--foreground,#eee)" } }, o.label); })));
   }
+  // Portal: render the modal into document.body so it escapes the dashboard's
+  // plugin container (which is its own stacking context — otherwise the app
+  // sidebar can paint over a position:fixed overlay no matter its z-index).
+  var _RDOM = (typeof window !== "undefined" && (window.ReactDOM || (SDK && SDK.ReactDOM) || (SDK && SDK.reactDOM))) || null;
+  var _createPortal = (_RDOM && _RDOM.createPortal) || (React && React.createPortal) || null;
+  function Portal(props) {
+    var elRef = useRef(null);
+    if (!elRef.current && typeof document !== "undefined") { var el = document.createElement("div"); el.setAttribute("data-tasklist-portal", ""); elRef.current = el; }
+    useEffect(function () { var node = elRef.current; if (!node || typeof document === "undefined") return; document.body.appendChild(node); return function () { try { document.body.removeChild(node); } catch (e) {} }; }, []);
+    if (_createPortal && elRef.current) return _createPortal(props.children, elRef.current);
+    return props.children; // graceful fallback: render inline
+  }
+
   function DotSelect(props) {
     var value = props.value, options = props.options || [], onChange = props.onChange, opts = props.opts || {};
     var st = useState(false); var open = st[0], setOpen = st[1];
-    var ref = useRef(null);
+    var ps = useState(null); var pos = ps[0], setPos = ps[1];
+    var ref = useRef(null); var btnRef = useRef(null);
     useEffect(function () {
       if (!open) return;
       function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
       function onKey(e) { if (e.key === "Escape") setOpen(false); }
+      function onScroll() { setOpen(false); }
       document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
-      return function () { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+      window.addEventListener("scroll", onScroll, true); window.addEventListener("resize", onScroll);
+      return function () { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", onScroll); };
     }, [open]);
+    function toggle() {
+      if (open) { setOpen(false); return; }
+      var r = btnRef.current ? btnRef.current.getBoundingClientRect() : null;
+      if (r) { var up = (window.innerHeight - r.bottom) < 260; setPos({ left: r.left, width: r.width, top: up ? null : Math.round(r.bottom + 4), bottom: up ? Math.round(window.innerHeight - r.top + 4) : null }); }
+      setOpen(true);
+    }
     var cur = null; for (var i = 0; i < options.length; i++) { if (String(options[i].value) === String(value)) { cur = options[i]; break; } }
+    var menu = (open && pos) ? h("div", { style: { position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, minWidth: Math.max(pos.width, 150), maxHeight: 260, overflow: "auto", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.55)", zIndex: 2000, padding: 4 } },
+      options.map(function (o) {
+        var sel = String(o.value) === String(value);
+        return h("div", { key: o.value, onClick: function () { onChange(o.value); setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", background: sel ? accent + "22" : "transparent" }, onMouseEnter: function (e) { if (!sel) e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { if (!sel) e.currentTarget.style.background = "transparent"; } },
+          o.dot ? Dot(o.dot, 9) : h("span", { style: { width: 9, flex: "0 0 auto" } }),
+          h("span", null, o.label));
+      })) : null;
     return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block" } },
-      h("button", { type: "button", onClick: function () { setOpen(!open); }, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 8, width: opts.full ? "100%" : undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left" } },
+      h("button", { ref: btnRef, type: "button", onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
         cur && cur.dot ? Dot(cur.dot, 9) : null,
         h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, cur ? cur.label : String(value || "")),
-        h("span", { style: { display: "inline-flex", color: muted } }, Caret(false, 11))),
-      open ? h("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, minWidth: "100%", maxHeight: 280, overflow: "auto", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.5)", zIndex: 50, padding: 4 } },
-        options.map(function (o) {
-          var sel = String(o.value) === String(value);
-          return h("div", { key: o.value, onClick: function () { onChange(o.value); setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", background: sel ? accent + "22" : "transparent" }, onMouseEnter: function (e) { if (!sel) e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { if (!sel) e.currentTarget.style.background = "transparent"; } },
-            o.dot ? Dot(o.dot, 9) : h("span", { style: { width: 9, flex: "0 0 auto" } }),
-            h("span", null, o.label));
-        })) : null);
+        h("span", { style: { display: "inline-flex", color: muted, flex: "0 0 auto" } }, Caret(false, 10))),
+      menu);
   }
 
   function statusOptions(t) { var o = SETTABLE.map(function (st) { return { value: st, label: statusMeta(st).label }; }); if (SETTABLE.indexOf(t.status) === -1) o.unshift({ value: t.status, label: statusMeta(t.status).label }); return o; }
@@ -469,8 +492,8 @@
           (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null)
         ),
         h("div", { style: { flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8 } },
-          cell(COLW.status, editSelect(t.status, function (v) { setStatus(t, v); }, statusOptions(t), "Status", { pill: true, small: true })),
-          cell(COLW.priority, editSelect(String(t.priority == null ? 0 : t.priority), function (v) { setPriority(t, v); }, prioOptions(t), "Priority", { pill: true, small: true })),
+          cell(COLW.status, h(DotSelect, { value: t.status, options: statusOptions(t).map(function (o) { return { value: o.value, label: o.label, dot: statusMeta(o.value).dot }; }), onChange: function (v) { setStatus(t, v); }, opts: { full: true, small: true, pill: true } })),
+          cell(COLW.priority, h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, small: true, pill: true } })),
           cell(COLW.assignee, editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { pill: true, small: true, maxWidth: (COLW.assignee - 4) + "px" })),
           cell(COLW.list, editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { pill: true, small: true, maxWidth: (COLW.list - 4) + "px" })),
           cell(COLW.age, h("span", { style: { fontSize: 11, color: muted } }, ago(t.created_at, now)), true)
@@ -664,7 +687,7 @@
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
           h("button", { onClick: function () { setModalId(null); }, title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
         h("div", { style: { flex: "1 1 auto", display: "flex", minHeight: 0, overflow: "hidden" } }, leftPane, rightPane));
-      return h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "3vh 2vw" } }, panel);
+      return h(Portal, null, h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "3vh 2vw" } }, panel));
     }
 
     // ---- page ---------------------------------------------------------------
