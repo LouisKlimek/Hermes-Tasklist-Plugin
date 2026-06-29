@@ -18,16 +18,6 @@
 (function () {
   "use strict";
 
-  var TASKLIST_BUILD = "2026-06-29-delete+confirm";
-  try {
-    console.info("[tasklist] build " + TASKLIST_BUILD + " loaded");
-    // sweep any orphaned overlay nodes a previous (crashed) build may have left
-    // behind — a stale full-screen overlay would silently swallow row clicks.
-    var _orphans = document.querySelectorAll("[data-tasklist-portal]");
-    for (var _i = 0; _i < _orphans.length; _i++) {
-      if (!_orphans[_i].firstChild && _orphans[_i].parentNode) _orphans[_i].parentNode.removeChild(_orphans[_i]);
-    }
-  } catch (e) {}
 
   var SDK = window.__HERMES_PLUGIN_SDK__;
   var React = SDK.React;

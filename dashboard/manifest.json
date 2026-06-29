@@ -3,11 +3,11 @@
   "label": "List",
   "description": "ClickUp-style list view of the Kanban board — group by status / assignee / priority / tenant / project, sort, filter, search, expand task details, and move status inline. Reads and writes the same kanban DB as the board.",
   "icon": "FileText",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "tab": {
     "path": "/list",
     "position": "after:skills"
   },
-  "entry": "dist/app-1759000002.js",
+  "entry": "dist/index.js",
   "api": "plugin_api.py"
 }
