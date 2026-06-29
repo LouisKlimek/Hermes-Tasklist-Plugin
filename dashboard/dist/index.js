@@ -105,28 +105,45 @@
   // sidebar can paint over a position:fixed overlay no matter its z-index).
   var _RDOM = (typeof window !== "undefined" && (window.ReactDOM || (SDK && SDK.ReactDOM) || (SDK && SDK.reactDOM))) || null;
   var _createPortal = (_RDOM && _RDOM.createPortal) || (React && React.createPortal) || null;
+  // Find the element React mounted into (its root container) by walking up from
+  // a node inside our tree. React 18 tags that element with a __reactContainer$
+  // expando and delegates all events there — so a portal node must live INSIDE
+  // it for onClick/onChange to keep firing. Appending high in that container
+  // (with a big z-index) also lifts us above the app sidebar's stacking context.
+  function findReactRootContainer(node) {
+    var n = node;
+    while (n && n.nodeType === 1) {
+      for (var k in n) { if (k.indexOf("__reactContainer$") === 0) return n; }
+      n = n.parentNode;
+    }
+    return null;
+  }
+
   function Portal(props) {
     var holderRef = useRef(null);
     var peRef = useRef(null);
+    var closeRef = useRef(null); closeRef.current = props.onClose;
     if (!peRef.current && typeof document !== "undefined") { var el = document.createElement("div"); el.setAttribute("data-tasklist-portal", ""); peRef.current = el; }
     useEffect(function () {
       var pe = peRef.current; if (!pe || typeof document === "undefined") return;
-      if (!pe.parentNode) document.body.appendChild(pe);
-      if (!_createPortal) {
-        var holder = holderRef.current;
-        if (holder) {
-          // tolerate React removing the relocated child from the (now-empty)
-          // holder during unmount instead of throwing NotFoundError
-          if (!holder.__tlPatched) { var orig = holder.removeChild.bind(holder); holder.removeChild = function (c) { return (c && c.parentNode === holder) ? orig(c) : c; }; holder.__tlPatched = true; }
-          while (holder.firstChild) pe.appendChild(holder.firstChild);
-        }
+      var holder = holderRef.current;
+      var root = (holder && findReactRootContainer(holder)) || document.body;
+      if (pe.parentNode !== root) root.appendChild(pe);
+      // belt-and-braces close (works even if we had to fall back to <body>,
+      // where React's delegated handlers wouldn't fire)
+      function onNativeClick(e) { var tgt = e.target; if (tgt && tgt.closest && tgt.closest("[data-tl-close]")) { if (closeRef.current) closeRef.current(); return; } if (tgt && tgt.hasAttribute && tgt.hasAttribute("data-tl-backdrop")) { if (closeRef.current) closeRef.current(); } }
+      pe.addEventListener("click", onNativeClick);
+      if (!_createPortal && holder) {
+        if (!holder.__tlPatched) { var orig = holder.removeChild.bind(holder); holder.removeChild = function (c) { return (c && c.parentNode === holder) ? orig(c) : c; }; holder.__tlPatched = true; }
+        while (holder.firstChild) pe.appendChild(holder.firstChild);
       }
       return function () {
-        if (!_createPortal) { var holder2 = holderRef.current; if (holder2) { while (pe.firstChild) holder2.appendChild(pe.firstChild); } }
+        pe.removeEventListener("click", onNativeClick);
+        if (!_createPortal && holder) { while (pe.firstChild) holder.appendChild(pe.firstChild); }
         if (pe.parentNode) pe.parentNode.removeChild(pe);
       };
     }, []);
-    if (_createPortal && peRef.current) return _createPortal(props.children, peRef.current);
+    if (_createPortal && peRef.current) return h(Fragment, null, h("div", { ref: holderRef, style: { display: "none" } }), _createPortal(props.children, peRef.current));
     return h("div", { ref: holderRef, style: { display: "contents" } }, props.children);
   }
 
@@ -151,11 +168,12 @@
       setOpen(true);
     }
     var cur = null; for (var i = 0; i < options.length; i++) { if (String(options[i].value) === String(value)) { cur = options[i]; break; } }
+    var anyDot = false; for (var j = 0; j < options.length; j++) { if (options[j].dot) { anyDot = true; break; } }
     var menu = (open && pos) ? h("div", { style: { position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, minWidth: Math.max(pos.width, 150), maxHeight: 260, overflow: "auto", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.55)", zIndex: 2000, padding: 4 } },
       options.map(function (o) {
         var sel = String(o.value) === String(value);
         return h("div", { key: o.value, onClick: function () { onChange(o.value); setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", background: sel ? accent + "22" : "transparent" }, onMouseEnter: function (e) { if (!sel) e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { if (!sel) e.currentTarget.style.background = "transparent"; } },
-          o.dot ? Dot(o.dot, 9) : h("span", { style: { width: 9, flex: "0 0 auto" } }),
+          o.dot ? Dot(o.dot, 9) : (anyDot ? h("span", { style: { width: 9, flex: "0 0 auto" } }) : null),
           h("span", null, o.label));
       })) : null;
     return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block" } },
@@ -483,7 +501,7 @@
     );
 
     // ======================== MAIN ==========================================
-    function plainSelect(value, onChange, options, aria) { return h("select", { value: value, "aria-label": aria, onChange: function (e) { onChange(e.target.value); }, className: "font-courier", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 4, padding: "4px 8px", fontSize: 12, cursor: "pointer" } }, options.map(function (o) { return h("option", { key: o.value, value: o.value, style: { background: "var(--background,#111)", color: "var(--foreground,#eee)" } }, o.label); })); }
+    function plainSelect(value, onChange, options, aria) { return h(DotSelect, { value: value, options: options, onChange: onChange, opts: {} }); }
     var toolbar = h("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 } },
       h("span", { style: { fontSize: 11, color: muted } }, "Group"),
       plainSelect(groupBy, setGroupBy, [{ value: "status", label: "Status" }, { value: "assignee", label: "Assignee" }, { value: "priority", label: "Priority" }, { value: "none", label: "None" }], "Group by"),
@@ -524,8 +542,8 @@
         h("div", { style: { flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8 } },
           cell(COLW.status, h(DotSelect, { value: t.status, options: statusOptions(t).map(function (o) { return { value: o.value, label: o.label, dot: statusMeta(o.value).dot }; }), onChange: function (v) { setStatus(t, v); }, opts: { full: true, small: true, pill: true } })),
           cell(COLW.priority, h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, small: true, pill: true } })),
-          cell(COLW.assignee, editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { pill: true, small: true, maxWidth: (COLW.assignee - 4) + "px" })),
-          cell(COLW.list, editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { pill: true, small: true, maxWidth: (COLW.list - 4) + "px" })),
+          cell(COLW.assignee, h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { full: true, small: true, pill: true } })),
+          cell(COLW.list, h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { full: true, small: true, pill: true } })),
           cell(COLW.age, h("span", { style: { fontSize: 11, color: muted } }, ago(t.created_at, now)), true)
         )
       );
@@ -589,8 +607,8 @@
       var fields = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px", paddingBottom: 26, borderBottom: "1px solid " + borderC } },
         field("Status", h(DotSelect, { value: t.status, options: statusOptions(t).map(function (o) { return { value: o.value, label: o.label, dot: statusMeta(o.value).dot }; }), onChange: function (v) { setStatus(t, v); }, opts: { full: true, lg: true } })),
         field("Priority", h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, lg: true } })),
-        field("Assignee", editSelect(t.assignee || "", function (v) { setAssignee(t, v); }, [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), "Assignee", { full: true, lg: true })),
-        field("List", editSelect(activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", function (v) { moveToList(t.id, v || null); }, listOpts, "List", { full: true, lg: true })),
+        field("Assignee", h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { full: true, lg: true } })),
+        field("List", h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { full: true, lg: true } })),
         readField("Workspace", task.workspace_path ? (task.workspace_kind + " \u00b7 " + task.workspace_path) : task.workspace_kind),
         readField("Created by", task.created_by),
         task.tenant ? readField("Tenant", task.tenant) : null
@@ -623,11 +641,11 @@
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
           parents.length ? parents.map(function (p) { return linkChip(p, function () { removeLink(p, id); }); }) : muteSpan("none"),
-          d ? editSelect("", function (v) { if (v) addLink(v, id); }, otherOpts("\u2014 add parent \u2014"), "Add parent", { maxWidth: "240px" }) : null),
+          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) addLink(v, id); }, opts: { maxWidth: "240px" } }) : null),
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Children"),
           children.length ? children.map(function (c) { return linkChip(c, function () { removeLink(id, c); }); }) : muteSpan("none"),
-          d ? editSelect("", function (v) { if (v) addLink(id, v); }, otherOpts("\u2014 add child \u2014"), "Add child", { maxWidth: "240px" }) : null));
+          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) addLink(id, v); }, opts: { maxWidth: "240px" } }) : null));
       L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
@@ -717,9 +735,9 @@
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
-          h("button", { onClick: function () { setModalId(null); }, title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
+          h("button", { onClick: function () { setModalId(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
         h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: isNarrow ? "column" : "row", minHeight: 0, overflow: isNarrow ? "auto" : "hidden" } }, leftPane, rightPane));
-      return h(Portal, null, h("div", { onClick: function () { setModalId(null); }, style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel));
+      return h(Portal, { onClose: function () { setModalId(null); } }, h("div", { onClick: function () { setModalId(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel));
     }
 
     // ---- page ---------------------------------------------------------------
