@@ -8,6 +8,6 @@
     "path": "/list",
     "position": "after:skills"
   },
-  "entry": "dist/index.js",
+  "entry": "dist/index.b2.js",
   "api": "plugin_api.py"
 }
