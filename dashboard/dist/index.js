@@ -243,6 +243,7 @@
     s = useState(null); var modalId = s[0], setModalId = s[1];
     s = useState("details"); var modalTab = s[0], setModalTab = s[1];
     s = useState(null); var confirmDel = s[0], setConfirmDel = s[1];
+    s = useState(null); var confirmDelList = s[0], setConfirmDelList = s[1];
     s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
     s = useState(null); var draft = s[0], setDraft = s[1];
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
@@ -290,6 +291,31 @@
     function tlq(slug) { return "?board=" + encodeURIComponent(slug || "default"); }
 
     useEffect(function () { getJSON(KAPI + "/boards").then(function (r) { setBoards((r && r.boards) || []); if (!boardRef.current && r && r.current) setBoard(r.current); }).catch(function () {}); }, []);
+
+    // Deep link: /list?task=<board>\x1F<taskId>  -> select board + open the ticket popup
+    useEffect(function () {
+      if (typeof window === "undefined" || !window.location) return;
+      try {
+        var raw = new URLSearchParams(window.location.search).get("task");
+        if (!raw) return;
+        var sep = raw.indexOf("\u001f"); if (sep === -1) sep = raw.indexOf("\u241f"); // tolerate visible ␟ too
+        var bd = sep !== -1 ? raw.slice(0, sep) : "";
+        var tid = sep !== -1 ? raw.slice(sep + 1) : raw;
+        if (bd) { setBoard(bd); setCollapsedBoards(function (n) { var x = Object.assign({}, n); x[bd] = false; return x; }); }
+        if (tid) setModalId(tid);
+      } catch (e) {}
+    }, []);
+
+    // Keep the URL in sync so an open ticket is shareable / reload-safe
+    useEffect(function () {
+      if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
+      try {
+        var url = new URL(window.location.href);
+        if (modalId && board) url.searchParams.set("task", board + "\u001f" + modalId);
+        else url.searchParams.delete("task");
+        window.history.replaceState(null, "", url.pathname + (url.search || "") + (url.hash || ""));
+      } catch (e) {}
+    }, [modalId, board]);
 
     var loadAssignees = useCallback(function () { getJSON(KAPI + "/assignees" + bq()).then(function (r) { setAsgOpts(((r && r.assignees) || []).map(asgName).filter(Boolean)); }).catch(function () {}); }, [bq]);
     useEffect(function () { loadAssignees(); }, [loadAssignees]);
@@ -369,7 +395,7 @@
     function setListColor(l, slug, color) { send("PATCH", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), { color: color }).then(function () { loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
     function createList(name, slug) { name = (name || "").trim(); if (!name) return; var color = LIST_COLORS[Math.floor(Math.random() * LIST_COLORS.length)]; send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { setAdding(null); setAddName(""); loadTreeFor(slug); if (r && r.list) activate(slug, { type: "list", id: r.list.id }); }).catch(function (e) { setNotice("Could not create list: " + ((e && e.message) || "error")); }); }
     function renameNode() { if (!editing) return; var nm = editName.trim(); var cur = editing; setEditing(null); if (!nm) return; send("PATCH", TLAPI + "/lists/" + encodeURIComponent(cur.id) + tlq(cur.board), { name: nm }).then(function () { loadTreeFor(cur.board); }).catch(function () { loadTreeFor(cur.board); }); }
-    function deleteList(l, slug) { if (!window.confirm("Delete list \u201c" + l.name + "\u201d? Tasks stay on the board, they just leave this list.")) return; send("DELETE", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), null).then(function () { if (scope.type === "list" && scope.id === l.id) setScope({ type: "all" }); loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
+    function deleteList(l, slug) { setConfirmDelList(null); send("DELETE", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), null).then(function () { if (scope.type === "list" && scope.id === l.id) setScope({ type: "all" }); loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
     function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }); }); }); chain.then(function () { loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
     function addTask(listId, status, title) {
       title = (title || "").trim(); if (!title) return; setNotice(null);
@@ -530,7 +556,7 @@
       var btnStyle = { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex", flex: "0 0 auto" };
       var trailing = h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, flex: "0 0 auto" } },
         h("button", { onClick: function (e) { e.stopPropagation(); setEditing({ id: l.id, board: slug }); setEditName(l.name); }, title: "Rename list", style: btnStyle }, PencilIcon(12)),
-        h("button", { onClick: function (e) { e.stopPropagation(); deleteList(l, slug); }, title: "Delete list", style: btnStyle }, XIcon(13))
+        h("button", { onClick: function (e) { e.stopPropagation(); setConfirmDelList({ l: l, slug: slug }); }, title: "Delete list", style: btnStyle }, XIcon(13))
       );
       return h("div", { key: l.id },
         entryRow({
@@ -929,7 +955,22 @@
                 h("button", { onClick: function () { setConfirmClose(false); submitCreate(); }, disabled: !hasTitle, title: hasTitle ? "" : "Add a title first", style: { background: hasTitle ? accent : bgMuted, color: hasTitle ? "#fff" : muted, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: hasTitle ? "pointer" : "not-allowed" } }, "Save task")))) ) : null);
     }
 
-    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal());
+    function listDeleteModal() {
+      if (!confirmDelList) return null;
+      var l = confirmDelList.l, slug = confirmDelList.slug;
+      return h(Portal, { onClose: function () { setConfirmDelList(null); } },
+        h("div", { onClick: function () { setConfirmDelList(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483600, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" } },
+          h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(440px, 96vw)", background: cardBg, border: "1px solid " + borderC, borderRadius: 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", padding: "22px 24px" } },
+            h("div", { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 10 } },
+              h("span", { style: { width: 10, height: 10, borderRadius: "50%", background: l.color || muted, flex: "0 0 auto" } }),
+              h("div", { style: { fontSize: 16, fontWeight: 700 } }, "Delete list?")),
+            h("div", { style: { fontSize: 13, lineHeight: 1.55, color: muted, marginBottom: 20 } }, "\u201c" + l.name + "\u201d will be removed. The tasks stay on the board \u2014 they just leave this list."),
+            h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10 } },
+              h("button", { onClick: function () { setConfirmDelList(null); }, "data-tl-close": "1", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
+              h("button", { onClick: function () { deleteList(l, slug); }, style: { background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 } }, TrashIcon(15), "Delete list")))));
+    }
+
+    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal(), listDeleteModal());
   }
 
   window.__HERMES_PLUGINS__.register("tasklist", TaskListPage);
