@@ -346,7 +346,7 @@
       getJSON(KAPI + "/tasks/" + encodeURIComponent(id) + bq()).then(function (d) { setDetail(function (m) { var n = Object.assign({}, m); n[id] = d; return n; }); })
         .catch(function () { setDetail(function (m) { var n = Object.assign({}, m); n[id] = { _error: true }; return n; }); });
     }, [bq, detail]);
-    useEffect(function () { if (modalId) loadDetail(modalId, false); }, [modalId]); // eslint-disable-line
+    useEffect(function () { if (modalId) { loadDetail(modalId, true); loadWorkerLog(modalId); } }, [modalId]); // eslint-disable-line
     useEffect(function () {
       if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? (t.title || "") : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
       function onKey(e) { if (e.key === "Escape") setModalId(null); }
