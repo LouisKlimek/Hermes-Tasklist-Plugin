@@ -258,8 +258,8 @@
         + ".tl-gedge.flow{animation:tl-flow .8s linear infinite}"
         + ".tl-pulse{animation:tl-pulse 2.1s ease-in-out infinite}"
         + ".tl-stage{animation:tl-fade-in .5s ease both}"
-        + "@keyframes tl-blocked{0%,100%{opacity:1}50%{opacity:.28}}"
-        + ".tl-blocked{animation:tl-blocked 1.1s ease-in-out infinite}"
+        + "@keyframes tl-blocked{0%,100%{opacity:1}50%{opacity:.2}}"
+        + ".tl-blocked{animation:tl-blocked 1.05s ease-in-out infinite;filter:drop-shadow(0 0 3px #ef4444)}"
         + "@media (prefers-reduced-motion: reduce){.tl-gnode.in,.tl-gedge.in,.tl-gedge.flow,.tl-pulse,.tl-stage,.tl-blocked{animation:none!important}.tl-gnode{transition:none}}"
         + ".tl-space,.tl-space *{cursor:grab!important}.tl-panning,.tl-panning *{cursor:grabbing!important}";
       document.head.appendChild(st);
@@ -432,6 +432,10 @@
     s = useState(false); var spaceHeld = s[0], setSpaceHeld = s[1];   // hold Space to pan (Photoshop-style)
     var spaceRef = useRef(false);
     var fitPendingRef = useRef(false);
+    s = useState(false); var pzAnim = s[0], setPzAnim = s[1];   // smooth transition during programmatic focus jumps
+    var pzTimerRef = useRef(null);
+    var blockTouchedRef = useRef(false);
+    s = useState(0); var blockNav = s[0], setBlockNav = s[1];   // index into the blocked-task cycle
     s = useState(""); var search = s[0], setSearch = s[1];
     s = useState(""); var fAssignee = s[0], setFAssignee = s[1];
     s = useState(false); var showArchived = s[0], setShowArchived = s[1];
@@ -1383,7 +1387,7 @@
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
         return h("g", { key: id, transform: "translate(" + p.x + "," + p.y + ")" },
           h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { if (suppressClickRef.current || spaceRef.current) return; setModalId(id); }, onMouseEnter: function () { if (panningRef.current) return; setGraphHover(id); }, onMouseLeave: function () { if (panningRef.current) return; setGraphHover(null); } },
-            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: isBlocked ? BLOCK_COL : (hov ? accent : borderC), strokeWidth: isBlocked ? 2.4 : (hov ? 2.2 : 1.3) }),
+            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: hov ? accent : borderC, strokeWidth: hov ? 2.2 : 1.3 }),
             isBlocked ? h("rect", { className: "tl-blocked", width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: "none", stroke: BLOCK_COL, strokeWidth: 2.6 }) : null,
             h("circle", { cx: 21, cy: NODE_H / 2, r: 5, fill: dm.dot }),
             h("text", { x: 36, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
@@ -1399,6 +1403,25 @@
         h("g", null, edgeEls), h("g", null, stageEls), h("g", null, nodeEls));
     }, [graphModel, graphHover, graphAnim, colorV]);
 
+    // The blocked tasks in this graph, left-to-right, for the ◀/▶ jump nav.
+    var blockedIds = useMemo(function () {
+      if (!graphModel || !graphModel.ids) return [];
+      var par = graphModel.par, pos = graphModel.pos;
+      function blk(id) { var t = taskById[id]; if (!t) return false; if (t.status === "blocked") return true; if (t.status === "done") return false; var ps = par[id]; if (!ps || !ps.length) return false; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return true; } return false; }
+      var out = graphModel.ids.filter(blk);
+      out.sort(function (a, b) { var pa = pos[a] || { x: 0, y: 0 }, pb = pos[b] || { x: 0, y: 0 }; return (pa.x - pb.x) || (pa.y - pb.y); });
+      return out;
+    }, [graphModel, taskById]);
+    // Smoothly pan+zoom the viewport so a node sits centred and clearly focused.
+    function focusNode(id) {
+      var el = viewportRef.current, gm = graphModel; if (!el || !gm || !gm.pos) return;
+      var p = gm.pos[id]; if (!p) return;
+      var r = el.getBoundingClientRect(); if (!r.width || !r.height) return;
+      var Z = 1.1, cx = p.x + gm.NODE_W / 2, cy = p.y + gm.NODE_H / 2;
+      setPzAnim(true); if (pzTimerRef.current) clearTimeout(pzTimerRef.current); pzTimerRef.current = setTimeout(function () { setPzAnim(false); }, 500);
+      setGraphZoom(Z); setGraphPan({ x: r.width / 2 - cx * Z, y: r.height / 2 - cy * Z }); setGraphHover(id);
+    }
+    function jumpBlocked(delta) { var n = blockedIds.length; if (!n) return; var k; if (!blockTouchedRef.current) { k = delta > 0 ? 0 : n - 1; blockTouchedRef.current = true; } else { var base = Math.min(blockNav, n - 1); k = ((base + delta) % n + n) % n; } setBlockNav(k); focusNode(blockedIds[k]); }
     function graphZoomAt(mx, my, factor) { var z = zoomRef.current, p = panRef.current, nz = Math.min(2.5, Math.max(0.35, z * factor)); if (nz === z) return; var rf = nz / z; setGraphPan({ x: mx - (mx - p.x) * rf, y: my - (my - p.y) * rf }); setGraphZoom(nz); }
     function graphZoomButton(factor) { var el = viewportRef.current; if (!el) { setGraphZoom(function (z) { return Math.min(2.5, Math.max(0.35, z * factor)); }); return; } var r = el.getBoundingClientRect(); graphZoomAt(r.width / 2, r.height / 2, factor); }
     function onGraphDown(e) {
@@ -1445,15 +1468,25 @@
       if (!graphModel || !graphModel.ids.length) return h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : "No tasks to graph in this scope.");
       function zBtn(lbl, fn, title) { return h("button", { onClick: fn, title: title, style: { background: bgMuted, color: "inherit", border: "1px solid " + borderC, borderRadius: 7, width: 30, height: 28, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" } }, lbl); }
       function legendDot(c, lbl) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: muted } }, h("span", { style: { width: 9, height: 9, borderRadius: 3, background: "transparent", border: "2px solid " + c } }), lbl); }
+      var nBlk = blockedIds.length, curIdx = nBlk ? Math.min(blockNav, nBlk - 1) : 0;
+      function navBtn(lbl, fn, title) { return h("button", { onClick: fn, title: title, disabled: !nBlk, style: { background: bgMuted, color: "inherit", border: "1px solid " + borderC, borderRadius: 6, width: 24, height: 22, fontSize: 10, lineHeight: 1, cursor: nBlk ? "pointer" : "default", opacity: nBlk ? 1 : 0.4, display: "inline-flex", alignItems: "center", justifyContent: "center" } }, lbl); }
+      var blockNavEl = h("div", { style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted } },
+        h("span", { className: "tl-blocked", style: { width: 12, height: 12, borderRadius: 3, border: "2px solid #ef4444", flex: "0 0 auto" } }),
+        nBlk
+          ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5 } },
+              navBtn("\u25c0", function () { jumpBlocked(-1); }, "Previous blocked task"),
+              h("button", { onClick: function () { blockTouchedRef.current = true; setBlockNav(curIdx); focusNode(blockedIds[curIdx]); }, title: "Zoom to this blocked task", style: { background: "transparent", border: "none", color: "inherit", cursor: "pointer", fontSize: 11.5, padding: 0, fontWeight: 600 } }, "Blocked " + (curIdx + 1) + "/" + nBlk),
+              navBtn("\u25b6", function () { jumpBlocked(1); }, "Next blocked task"))
+          : h("span", null, "No blocked tasks"));
       var controls = h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u26f6", graphFit, "Fit to screen"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
-          h("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted } }, h("span", { className: "tl-blocked", style: { width: 12, height: 12, borderRadius: 3, border: "2px solid #ef4444", flex: "0 0 auto" } }), "Blocked \u2014 status or waiting on a parent"),
+          blockNavEl,
           h("span", { style: { fontSize: 11.5, color: muted } }, "dot = task status")),
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
         h("div", { ref: viewportRef, onMouseDown: onGraphDown, className: (panning ? "tl-panning" : (spaceHeld ? "tl-space" : "")), style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
-          h("div", { style: { position: "absolute", left: 0, top: 0, transformOrigin: "0 0", transform: "translate(" + graphPan.x + "px," + graphPan.y + "px) scale(" + graphZoom + ")", willChange: "transform" } }, graphSvg)));
+          h("div", { style: { position: "absolute", left: 0, top: 0, transformOrigin: "0 0", transform: "translate(" + graphPan.x + "px," + graphPan.y + "px) scale(" + graphZoom + ")", transition: pzAnim ? "transform .5s cubic-bezier(.4,0,.2,1)" : "none", willChange: "transform" } }, graphSvg)));
     }
 
     var main = h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
