@@ -53,8 +53,8 @@
   function hsize(n) { if (n == null) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function fmtPayload(p) { if (p == null || p === "") return ""; var str; try { str = typeof p === "string" ? p : JSON.stringify(p); } catch (e) { str = String(p); } return str; }
   function fmtBytes(n) { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
-  function filesHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/files/" + clean.split("/").map(function (seg) { return encodeURIComponent(seg); }).join("/"); }
-  function linkifyPaths(text) {
+  function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
+  function linkifyPaths(text, onOpen) {
     if (text == null || text === "") return text;
     var s = String(text);
     var re = /((?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8})/g;
@@ -62,7 +62,7 @@
     while ((m = re.exec(s)) !== null) {
       if (m.index > last) out.push(s.slice(last, m.index));
       var path = m[1];
-      out.push(h("a", { key: "fp" + (i++), href: filesHref(path), target: "_blank", rel: "noopener noreferrer", title: "Open " + path, onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all" } }, path));
+      out.push(h("a", { key: "fp" + (i++), href: filesDownloadHref(path), target: "_blank", rel: "noopener noreferrer", title: "Open " + path, onClick: (function (pp) { return function (e) { e.stopPropagation(); if (onOpen) { e.preventDefault(); onOpen(pp); } }; })(path), style: { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" } }, path));
       last = m.index + m[0].length;
     }
     if (!out.length) return s;
@@ -78,6 +78,7 @@
   function CommentIcon() { return h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" })); }
   function XIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("line", { x1: 18, y1: 6, x2: 6, y2: 18 }), h("line", { x1: 6, y1: 6, x2: 18, y2: 18 })); }
   function TrashIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("polyline", { points: "3 6 5 6 21 6" }), h("path", { d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }), h("line", { x1: 10, y1: 11, x2: 10, y2: 17 }), h("line", { x1: 14, y1: 11, x2: 14, y2: 17 })); }
+  function ArchiveIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("rect", { x: 3, y: 4, width: 18, height: 4, rx: 1 }), h("path", { d: "M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" }), h("line", { x1: 10, y1: 12, x2: 14, y2: 12 })); }
   function PlusIcon(sz) { sz = sz || 14; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" }, h("line", { x1: 12, y1: 5, x2: 12, y2: 19 }), h("line", { x1: 5, y1: 12, x2: 19, y2: 12 })); }
   function PencilIcon(sz) { sz = sz || 12; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M12 20h9" }), h("path", { d: "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" })); }
 
@@ -269,6 +270,7 @@
     s = useState("details"); var modalTab = s[0], setModalTab = s[1];
     s = useState(null); var confirmDel = s[0], setConfirmDel = s[1];
     s = useState(null); var confirmDelList = s[0], setConfirmDelList = s[1];
+    s = useState(null); var filePreview = s[0], setFilePreview = s[1];
     s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
     s = useState(null); var draft = s[0], setDraft = s[1];
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
@@ -306,6 +308,7 @@
 
     var lastEvent = useRef(-1);
     var boardRef = useRef(board); boardRef.current = board;
+    var filePreviewRef = useRef(null); filePreviewRef.current = filePreview;
     var dragRef = useRef(null);
 
     useEffect(function () { try { localStorage.setItem(LS_GROUPBY, groupBy); } catch (e) {} }, [groupBy]);
@@ -404,7 +407,7 @@
     useEffect(function () { if (modalId) { loadDetail(modalId, true); loadWorkerLog(modalId); } }, [modalId]); // eslint-disable-line
     useEffect(function () {
       if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? (t.title || "") : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
-      function onKey(e) { if (e.key === "Escape") setModalId(null); }
+      function onKey(e) { if (e.key === "Escape") { if (filePreviewRef.current) { setFilePreview(null); } else setModalId(null); } }
       window.addEventListener("keydown", onKey); return function () { window.removeEventListener("keydown", onKey); };
     }, [modalId]); // eslint-disable-line
 
@@ -478,6 +481,23 @@
 
     // ---- detail-popup mutations (parity with the native kanban drawer) ------
     function reloadTask(id) { loadDetail(id, true); load(true); }
+    function openFilePreview(path) {
+      var clean = String(path).replace(/^\/+/, "");
+      setFilePreview({ path: path, loading: true });
+      getJSON("/api/files/read?path=" + encodeURIComponent(clean)).then(function (r) {
+        var du = r && r.data_url; var mime = (r && r.mime_type) || ""; var text = null;
+        var isText = /^text\//.test(mime) || /(json|markdown|xml|yaml|x-yaml|javascript|typescript|csv|x-sh|x-python|toml)/i.test(mime) || /\.(md|markdown|txt|log|json|ya?ml|csv|tsv|py|js|jsx|ts|tsx|sh|bash|zsh|toml|ini|cfg|conf|env|html?|css|scss|sql|go|rs|rb|java|c|cpp|h|xml)$/i.test((r && r.name) || clean);
+        if (du && isText) { var b64 = String(du).split(",")[1] || ""; try { text = decodeURIComponent(escape(atob(b64))); } catch (e) { try { text = atob(b64); } catch (_) { text = null; } } }
+        setFilePreview({ path: path, loading: false, name: r && r.name, mime: mime, size: r && r.size, dataUrl: du, text: text });
+      }).catch(function (e) { setFilePreview({ path: path, loading: false, err: (e && e.message) || "not found" }); });
+    }
+    function archiveTask(id, toStatus) {
+      if (!id) return;
+      setNotice(null);
+      send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { status: toStatus })
+        .then(function () { setModalId(null); load(true); loadTreeFor(board); })
+        .catch(function (e) { setNotice((toStatus === "archived" ? "Could not archive: " : "Could not unarchive: ") + ((e && e.message) || "error")); });
+    }
     function deleteTask(id) {
       if (!id) return;
       setNotice(null);
@@ -788,7 +808,7 @@
               h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Cancel")))
         : h("div", { className: "tl-editable", onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, title: "Click to edit", style: { position: "relative", padding: "12px 14px", minHeight: 46 } },
             task.body
-              ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.65 } }, linkifyPaths(task.body))
+              ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.65 } }, linkifyPaths(task.body, openFilePreview))
               : h("span", { style: { fontSize: 13.5, color: muted, fontStyle: "italic" } }, "Add a description\u2026"),
             h("span", { className: "tl-penhint", style: { position: "absolute", top: 9, right: 11, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: muted, pointerEvents: "none" } }, PencilIcon(12), "Edit"));
       L.push(h("div", { key: "desc" }, section("Description", null, descBody, { first: true })));
@@ -810,7 +830,7 @@
       L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
-      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 } }, linkifyPaths(task.result)))));
+      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 } }, linkifyPaths(task.result, openFilePreview)))));
 
       // ---- Attachments -------------------------------------------------------
       var atts = (d && d.attachments) || [];
@@ -861,7 +881,7 @@
               r.profile ? h("span", { style: { color: muted } }, "@" + r.profile) : null,
               dur ? h("span", { style: { color: muted, fontSize: 11 } }, dur) : null,
               h("span", { style: { color: muted, fontSize: 11, marginLeft: "auto" } }, ago(r.ended_at || r.started_at, now) + " ago")),
-            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, linkifyPaths(r.summary)) : null,
+            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, linkifyPaths(r.summary, openFilePreview)) : null,
             r.error ? h("div", { style: { marginTop: 4, color: "#f87171", fontSize: 12.5 } }, r.error) : null);
         }));
         R.push(h("div", { key: "runs" }, section("Run history (" + runs.length + ")", null, runBody, { first: R.length === 0 })));
@@ -873,7 +893,7 @@
               h("div", { style: { width: 26, height: 26, borderRadius: "50%", background: bgMuted, border: "1px solid " + borderC, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "0 0 auto", textTransform: "uppercase" } }, (c.author || c.created_by || "?").slice(0, 2)),
               h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
                 h("div", { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 3 } }, h("span", { style: { fontSize: 12.5, fontWeight: 600 } }, c.author || c.created_by || "?"), h("span", { style: { color: muted, fontSize: 11 } }, ago(c.created_at, now) + " ago")),
-                h("div", { style: { fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" } }, linkifyPaths(c.body || c.text || ""))));
+                h("div", { style: { fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" } }, linkifyPaths(c.body || c.text || "", openFilePreview))));
           }))
         : muteSpan("\u2014 no comments \u2014");
       R.push(h("div", { key: "cm" }, section("Comments (" + comments.length + ")", null, commentList, { first: R.length === 0 })));
@@ -909,6 +929,7 @@
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
+          h("button", { onClick: function () { archiveTask(t.id, t.status === "archived" ? "todo" : "archived"); }, title: t.status === "archived" ? "Unarchive task" : "Archive task", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, ArchiveIcon(16), isNarrow ? null : (t.status === "archived" ? "Unarchive" : "Archive")),
           h("button", { onClick: function () { setConfirmDel(t.id); }, title: "Delete task", style: { background: "transparent", color: "#f87171", border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, TrashIcon(16), isNarrow ? null : "Delete"),
           h("button", { onClick: function () { setModalId(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
         body);
@@ -1021,7 +1042,27 @@
               h("button", { onClick: function () { deleteList(l, slug); }, style: { background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 } }, TrashIcon(15), "Delete list")))));
     }
 
-    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal(), listDeleteModal());
+    function filePreviewModal() {
+      if (!filePreview) return null;
+      var fp = filePreview;
+      var body = fp.loading ? h("div", { style: { color: muted, fontSize: 13 } }, "Loading\u2026")
+        : fp.err ? h("div", { style: { color: "#f87171", fontSize: 13, lineHeight: 1.6 } }, "Could not open file: " + fp.err + ". You can still try the Download button.")
+        : (fp.text != null) ? h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text)
+        : (/^image\//.test(fp.mime || "") && fp.dataUrl) ? h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", height: "auto", borderRadius: 8 } })
+        : h("div", { style: { color: muted, fontSize: 13, lineHeight: 1.6 } }, "No inline preview for this file type (" + (fp.mime || "unknown") + "). Use the Download button to open it.");
+      return h(Portal, { onClose: function () { setFilePreview(null); } },
+        h("div", { onClick: function () { setFilePreview(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483300, background: "rgba(0,0,0,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } },
+          h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(900px, 96vw)", height: isNarrow ? "100vh" : "86vh", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column", overflow: "hidden" } },
+            h("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+              h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
+                h("div", { style: { fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, fp.name || fp.path),
+                h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: fp.path }, fp.path)),
+              h("a", { href: filesDownloadHref(fp.path), target: "_blank", rel: "noopener noreferrer", style: { flex: "0 0 auto", textDecoration: "none", background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 13px", fontSize: 12.5 } }, "Download"),
+              h("button", { onClick: function () { setFilePreview(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex" } }, XIcon(20))),
+            h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "14px 16px" : "18px 22px" } }, body))));
+    }
+
+    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal(), listDeleteModal(), filePreviewModal());
   }
 
   window.__HERMES_PLUGINS__.register("tasklist", TaskListPage);
