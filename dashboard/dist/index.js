@@ -1374,20 +1374,22 @@
       var stageEls = []; for (var L = 0; L <= gm.maxLevel; L++) { var cx = 26 + L * (NODE_W + 88) + NODE_W / 2; stageEls.push(h("text", { key: "st" + L, className: graphAnim ? "tl-stage" : null, x: cx, y: 20, textAnchor: "middle", fill: "currentColor", opacity: 0.6, fontSize: 11, fontWeight: 600, style: graphAnim ? { letterSpacing: ".04em", animationDelay: (L * 55) + "ms" } : { letterSpacing: ".04em" } }, "Stage " + (L + 1))); }
       var nodeEls = gm.ids.map(function (id) {
         var t = taskById[id]; if (!t) return null; var p = pos[id];
-        var dim = hi && !hi[id]; var hov = graphHover === id; var blk = depBlocked(id);
+        var dim = hi && !hi[id]; var hov = graphHover === id;
+        var depBlk = depBlocked(id);                          // waiting on an unfinished parent
+        var isBlocked = depBlk || t.status === "blocked";      // emphasise either kind of block
         var dm = statusMeta(t.status); var title = String(t.title || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "\u2026";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
         var rest = (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
         return h("g", { key: id, transform: "translate(" + p.x + "," + p.y + ")" },
           h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { if (suppressClickRef.current || spaceRef.current) return; setModalId(id); }, onMouseEnter: function () { if (panningRef.current) return; setGraphHover(id); }, onMouseLeave: function () { if (panningRef.current) return; setGraphHover(null); } },
-            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: blk ? BLOCK_COL : (hov ? accent : borderC), strokeWidth: blk ? 2.4 : (hov ? 2.2 : 1.3) }),
-            blk ? h("rect", { className: "tl-blocked", width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: "none", stroke: BLOCK_COL, strokeWidth: 2.6 }) : null,
+            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: isBlocked ? BLOCK_COL : (hov ? accent : borderC), strokeWidth: isBlocked ? 2.4 : (hov ? 2.2 : 1.3) }),
+            isBlocked ? h("rect", { className: "tl-blocked", width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: "none", stroke: BLOCK_COL, strokeWidth: 2.6 }) : null,
             h("circle", { cx: 21, cy: NODE_H / 2, r: 5, fill: dm.dot }),
             h("text", { x: 36, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
             h("text", { x: 36, y: NODE_H / 2 + 14, fontSize: 10.5 },
               h("tspan", { fill: dm.dot, fontWeight: 600 }, dm.label),
-              blk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, "  \u00b7  waiting on a parent") : null,
+              depBlk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, "  \u00b7  waiting on a parent") : null,
               rest ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null)));
       });
       return h("svg", { width: gm.W, height: gm.H, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
@@ -1446,7 +1448,7 @@
       var controls = h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u26f6", graphFit, "Fit to screen"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
-          h("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted } }, h("span", { className: "tl-blocked", style: { width: 12, height: 12, borderRadius: 3, border: "2px solid #ef4444", flex: "0 0 auto" } }), "Blocked \u2014 waiting on an unfinished parent"),
+          h("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted } }, h("span", { className: "tl-blocked", style: { width: 12, height: 12, borderRadius: 3, border: "2px solid #ef4444", flex: "0 0 auto" } }), "Blocked \u2014 status or waiting on a parent"),
           h("span", { style: { fontSize: 11.5, color: muted } }, "dot = task status")),
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
