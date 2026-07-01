@@ -182,6 +182,9 @@
   // Server-side path-resolution cache (this plugin's own backend, /api/plugins/tasklist/pathcache).
   function pcRemoteGet() { return getJSON(TLAPI + "/pathcache"); }
   function pcRemotePut(cand, rec) { return send("PUT", TLAPI + "/pathcache", { cand: cand, state: rec.state, resolved: rec.resolved || null }); }
+  // Best-effort read of the *File Explorer* plugin's cache, if it's installed. Purely additive:
+  // we never write to it, so the two plugins stay independent but share resolved paths when both exist.
+  function pcRemoteGetOther() { return getJSON("/api/plugins/fileexplorer/pathcache"); }
   // Raw authenticated fetch for multipart upload + binary download, where
   // fetchJSON's JSON assumptions don't fit. Mirrors the dashboard's own auth:
   // loopback injects window.__HERMES_SESSION_TOKEN__ (sent as a header); the
@@ -420,15 +423,12 @@
     var cacheReadyRef = useRef(false);   // true once the server cache (or LS fallback) has been loaded
     var backendRef = useRef(true);       // false if the backend cache endpoint is unreachable -> LS fallback
     useEffect(function () {
-      pcRemoteGet().then(function (r) {
-        var e = (r && r.entries) || {};
-        Object.keys(e).forEach(function (k) { if (!(k in pathValidRef.current)) pathValidRef.current[k] = { state: e[k].state, resolved: e[k].resolved }; });
-        cacheReadyRef.current = true; setPathV(function (v) { return v + 1; });
-      }).catch(function () {
-        backendRef.current = false;
-        var ls = fxLoadCache(); Object.keys(ls).forEach(function (k) { if (!(k in pathValidRef.current)) pathValidRef.current[k] = ls[k]; });
-        cacheReadyRef.current = true; setPathV(function (v) { return v + 1; });
-      });
+      function merge(r) { var e = (r && r.entries) || {}; Object.keys(e).forEach(function (k) { if (!(k in pathValidRef.current)) pathValidRef.current[k] = { state: e[k].state, resolved: e[k].resolved }; }); }
+      var other = pcRemoteGetOther().catch(function () { return null; });   // File Explorer's cache, if present
+      pcRemoteGet().then(function (r) { backendRef.current = true; merge(r); })
+        .catch(function () { backendRef.current = false; var ls = fxLoadCache(); Object.keys(ls).forEach(function (k) { if (!(k in pathValidRef.current)) pathValidRef.current[k] = ls[k]; }); })
+        .then(function () { return other; })
+        .then(function (r) { if (r) merge(r); cacheReadyRef.current = true; setPathV(function (v) { return v + 1; }); });
     }, []);
     var searchChainRef = useRef(Promise.resolve());
     s = useState(0); var pathV = s[0], setPathV = s[1];
