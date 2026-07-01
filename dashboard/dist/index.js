@@ -309,6 +309,7 @@
     var lastEvent = useRef(-1);
     var boardRef = useRef(board); boardRef.current = board;
     var filePreviewRef = useRef(null); filePreviewRef.current = filePreview;
+    var resolveCacheRef = useRef({});
     var dragRef = useRef(null);
 
     useEffect(function () { try { localStorage.setItem(LS_GROUPBY, groupBy); } catch (e) {} }, [groupBy]);
@@ -481,15 +482,66 @@
 
     // ---- detail-popup mutations (parity with the native kanban drawer) ------
     function reloadTask(id) { loadDetail(id, true); load(true); }
+    function parseRead(dispPath, r) {
+      var du = r && r.data_url; var mime = (r && r.mime_type) || ""; var text = null;
+      var isText = /^text\//.test(mime) || /(json|markdown|xml|yaml|x-yaml|javascript|typescript|csv|x-sh|x-python|toml)/i.test(mime) || /\.(md|markdown|txt|log|json|ya?ml|csv|tsv|py|js|jsx|ts|tsx|sh|bash|zsh|toml|ini|cfg|conf|env|html?|css|scss|sql|go|rs|rb|java|c|cpp|h|xml)$/i.test((r && r.name) || dispPath);
+      if (du && isText) { var b64 = String(du).split(",")[1] || ""; try { text = decodeURIComponent(escape(atob(b64))); } catch (e) { try { text = atob(b64); } catch (_) { text = null; } } }
+      return { name: r && r.name, mime: mime, size: r && r.size, dataUrl: du, text: text };
+    }
+    function readFile(p) { return getJSON("/api/files/read?path=" + encodeURIComponent(p)); }
+    function listDir(rel) { return getJSON("/api/files" + (rel ? ("?path=" + encodeURIComponent(rel)) : "")).catch(function () { return null; }); }
+    // Agents often write paths relative to their working dir (prefix missing).
+    // Walk the managed file tree and find the file whose path ends with the given relative path.
+    function resolveFilePath(relRaw) {
+      var rel = String(relRaw).replace(/^\/+/, "");
+      if (rel in resolveCacheRef.current) return Promise.resolve(resolveCacheRef.current[rel]);
+      var base = rel.split("/").pop();
+      var SKIP = { "node_modules": 1, ".git": 1, "__pycache__": 1, "site-packages": 1, ".venv": 1, "venv": 1, ".cache": 1, ".npm": 1, ".mypy_cache": 1, "dist": 1, ".next": 1, "build": 1 };
+      var rootPath = null, listings = 0, MAX = 200, MAX_DEPTH = 9;
+      var queue = [{ d: "", depth: 0 }], seen = { "": 1 }, basenameHits = [];
+      function relOf(e) { if (rootPath && e.path && e.path.indexOf(rootPath) === 0) return e.path.slice(rootPath.length).replace(/^\/+/, ""); return e.name; }
+      function loop() {
+        if (!queue.length || listings >= MAX) return Promise.resolve(null);
+        var wave = []; while (queue.length && wave.length < 6 && listings < MAX) { wave.push(queue.shift()); listings++; }
+        return Promise.all(wave.map(function (item) {
+          return listDir(item.d).then(function (r) {
+            if (!r) return null;
+            if (rootPath == null && r.root) rootPath = r.root;
+            var found = null;
+            (r.entries || []).forEach(function (e) {
+              var rr = relOf(e);
+              if (e.is_directory) { if (item.depth < MAX_DEPTH && !SKIP[e.name] && !seen[rr]) { seen[rr] = 1; queue.push({ d: rr, depth: item.depth + 1 }); } }
+              else { if (rr === rel || rr.length > rel.length && rr.slice(-(rel.length + 1)) === ("/" + rel)) found = rr; else if (e.name === base) basenameHits.push(rr); }
+            });
+            return found;
+          });
+        })).then(function (results) { var hit = results.filter(Boolean)[0]; return hit ? hit : loop(); });
+      }
+      return loop().then(function (hit) {
+        var pick = hit;
+        if (!pick && basenameHits.length) {
+          if (basenameHits.length === 1) pick = basenameHits[0];
+          else { var lastDir = rel.split("/").slice(-2)[0]; var better = basenameHits.filter(function (p) { return lastDir && p.indexOf("/" + lastDir + "/") !== -1; }); if (better.length === 1) pick = better[0]; }
+        }
+        resolveCacheRef.current[rel] = pick || false;
+        return pick || false;
+      });
+    }
     function openFilePreview(path) {
       var clean = String(path).replace(/^\/+/, "");
       setFilePreview({ path: path, loading: true });
-      getJSON("/api/files/read?path=" + encodeURIComponent(clean)).then(function (r) {
-        var du = r && r.data_url; var mime = (r && r.mime_type) || ""; var text = null;
-        var isText = /^text\//.test(mime) || /(json|markdown|xml|yaml|x-yaml|javascript|typescript|csv|x-sh|x-python|toml)/i.test(mime) || /\.(md|markdown|txt|log|json|ya?ml|csv|tsv|py|js|jsx|ts|tsx|sh|bash|zsh|toml|ini|cfg|conf|env|html?|css|scss|sql|go|rs|rb|java|c|cpp|h|xml)$/i.test((r && r.name) || clean);
-        if (du && isText) { var b64 = String(du).split(",")[1] || ""; try { text = decodeURIComponent(escape(atob(b64))); } catch (e) { try { text = atob(b64); } catch (_) { text = null; } } }
-        setFilePreview({ path: path, loading: false, name: r && r.name, mime: mime, size: r && r.size, dataUrl: du, text: text });
-      }).catch(function (e) { setFilePreview({ path: path, loading: false, err: (e && e.message) || "not found" }); });
+      readFile(clean).then(function (r) {
+        setFilePreview(Object.assign({ path: clean, loading: false }, parseRead(clean, r)));
+      }).catch(function () {
+        setFilePreview({ path: path, loading: true, searching: true });
+        resolveFilePath(clean).then(function (resolved) {
+          if (resolved && resolved !== clean) {
+            readFile(resolved).then(function (r) {
+              setFilePreview(Object.assign({ path: resolved, orig: path, loading: false }, parseRead(resolved, r)));
+            }).catch(function (e) { setFilePreview({ path: path, loading: false, err: (e && e.message) || "not found" }); });
+          } else { setFilePreview({ path: path, loading: false, err: "not found", searchedNoMatch: true }); }
+        }).catch(function () { setFilePreview({ path: path, loading: false, err: "not found" }); });
+      });
     }
     function archiveTask(id, toStatus) {
       if (!id) return;
@@ -1045,8 +1097,8 @@
     function filePreviewModal() {
       if (!filePreview) return null;
       var fp = filePreview;
-      var body = fp.loading ? h("div", { style: { color: muted, fontSize: 13 } }, "Loading\u2026")
-        : fp.err ? h("div", { style: { color: "#f87171", fontSize: 13, lineHeight: 1.6 } }, "Could not open file: " + fp.err + ". You can still try the Download button.")
+      var body = fp.loading ? h("div", { style: { color: muted, fontSize: 13 } }, fp.searching ? "File not at that path \u2014 searching the file tree\u2026" : "Loading\u2026")
+        : fp.err ? h("div", { style: { color: "#f87171", fontSize: 13, lineHeight: 1.6 } }, "Could not open file: " + fp.err + (fp.searchedNoMatch ? " (no match found by searching either)" : "") + ". You can still try the Download button.")
         : (fp.text != null) ? h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text)
         : (/^image\//.test(fp.mime || "") && fp.dataUrl) ? h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", height: "auto", borderRadius: 8 } })
         : h("div", { style: { color: muted, fontSize: 13, lineHeight: 1.6 } }, "No inline preview for this file type (" + (fp.mime || "unknown") + "). Use the Download button to open it.");
@@ -1056,7 +1108,8 @@
             h("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
               h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
                 h("div", { style: { fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, fp.name || fp.path),
-                h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: fp.path }, fp.path)),
+                h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: fp.path }, fp.path),
+                fp.orig ? h("div", { style: { fontSize: 10.5, color: muted, marginTop: 1 } }, "auto-resolved from \u201c" + fp.orig + "\u201d") : null),
               h("a", { href: filesDownloadHref(fp.path), target: "_blank", rel: "noopener noreferrer", style: { flex: "0 0 auto", textDecoration: "none", background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 13px", fontSize: 12.5 } }, "Download"),
               h("button", { onClick: function () { setFilePreview(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex" } }, XIcon(20))),
             h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "14px 16px" : "18px 22px" } }, body))));
