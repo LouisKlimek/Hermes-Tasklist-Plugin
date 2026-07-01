@@ -70,17 +70,18 @@
     return out;
   }
 
-  function mdCodeStyle() { return { fontFamily: "var(--font-courier, monospace)", fontSize: "0.92em", background: "var(--muted, rgba(255,255,255,.06))", borderRadius: 4, padding: "1px 5px" }; }
-  function mdInline(s) {
+  function mdCodeStyle() { return { fontFamily: "var(--font-courier, monospace)", fontSize: "0.9em", background: "rgba(128,128,128,.18)", border: "1px solid rgba(128,128,128,.28)", borderRadius: 4, padding: "0.5px 5px", color: "inherit" }; }
+  function mdInline(s, onOpen) {
     var out = [], rest = String(s == null ? "" : s), key = 0;
     var pats = [
       { re: /`([^`]+)`/, mk: function (m) { return h("code", { key: "c" + (key++), style: mdCodeStyle() }, m[1]); } },
-      { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1])); } },
-      { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1])); } },
-      { re: /\*([^*]+)\*/, mk: function (m) { return h("em", { key: "i" + (key++) }, mdInline(m[1])); } },
-      { re: /~~([^~]+)~~/, mk: function (m) { return h("del", { key: "s" + (key++) }, mdInline(m[1])); } },
+      { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
+      { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
+      { re: /\*([^*]+)\*/, mk: function (m) { return h("em", { key: "i" + (key++) }, mdInline(m[1], onOpen)); } },
+      { re: /~~([^~]+)~~/, mk: function (m) { return h("del", { key: "s" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /\[([^\]]+)\]\(([^)\s]+)\)/, mk: function (m) { return h("a", { key: "l" + (key++), href: m[2], target: "_blank", rel: "noopener noreferrer", style: { color: accent, textDecoration: "underline" } }, m[1]); } }
     ];
+    if (onOpen) pats.push({ re: /((?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8})/, mk: function (m) { var pp = m[1]; return h("a", { key: "fp" + (key++), href: filesDownloadHref(pp), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" } }, pp); } });
     var guard = 0;
     while (rest && guard++ < 5000) {
       var best = null;
@@ -92,9 +93,9 @@
     }
     return out;
   }
-  function mdHeadingStyle(lvl) { var sizes = [21, 17.5, 15.5, 14, 13, 12.5]; return { margin: lvl <= 2 ? "18px 0 8px" : "14px 0 6px", fontSize: sizes[lvl - 1] || 13, fontWeight: 700, lineHeight: 1.3, borderBottom: lvl <= 2 ? "1px solid var(--border, rgba(255,255,255,.12))" : "none", paddingBottom: lvl <= 2 ? 5 : 0 }; }
+  function mdHeadingStyle(lvl) { var sizes = [21, 17.5, 15.5, 14, 13, 12.5]; return { margin: lvl <= 2 ? "18px 0 8px" : "14px 0 6px", fontSize: sizes[lvl - 1] || 13, fontWeight: 700, lineHeight: 1.3, borderBottom: lvl <= 2 ? "1px solid rgba(128,128,128,.28)" : "none", paddingBottom: lvl <= 2 ? 5 : 0 }; }
   function mdCells(l) { var t = l.trim().replace(/^\|/, "").replace(/\|$/, ""); return t.split("|").map(function (c) { return c.trim(); }); }
-  function mdList(lines, k) {
+  function mdList(lines, k, onOpen) {
     var indents = lines.map(function (l) { return /^(\s*)/.exec(l)[1].length; });
     var minI = Math.min.apply(null, indents);
     var ordered = new RegExp("^\\s{" + minI + "}\\d+\\.\\s+").test(lines[0]);
@@ -107,31 +108,31 @@
     });
     if (cur) items.push(cur);
     return h(ordered ? "ol" : "ul", { key: "L" + k, style: { margin: "0 0 10px", paddingLeft: 22, lineHeight: 1.6 } }, items.map(function (it, idx) {
-      var kids = it.children.length ? mdBlocks(it.children.map(function (c) { return c.replace(new RegExp("^\\s{0," + (minI + 2) + "}"), ""); }).join("\n")) : null;
-      return h("li", { key: idx, style: { marginBottom: 3 } }, mdInline(it.text), kids);
+      var kids = it.children.length ? mdBlocks(it.children.map(function (c) { return c.replace(new RegExp("^\\s{0," + (minI + 2) + "}"), ""); }).join("\n"), onOpen) : null;
+      return h("li", { key: idx, style: { marginBottom: 3 } }, mdInline(it.text, onOpen), kids);
     }));
   }
-  function mdBlocks(md) {
+  function mdBlocks(md, onOpen) {
     var lines = String(md == null ? "" : md).replace(/\r\n?/g, "\n").split("\n");
     var blocks = [], i = 0, key = 0;
-    function para(buf) { if (buf.length) blocks.push(h("p", { key: "p" + (key++), style: { margin: "0 0 10px", lineHeight: 1.65 } }, mdInline(buf.join(" ")))); }
+    function para(buf) { if (buf.length) blocks.push(h("p", { key: "p" + (key++), style: { margin: "0 0 10px", lineHeight: 1.65 } }, mdInline(buf.join(" "), onOpen))); }
     while (i < lines.length) {
       var line = lines[i];
       var fence = /^\s*```/.test(line);
-      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), style: { margin: "0 0 12px", background: "var(--muted, rgba(255,255,255,.06))", border: "1px solid var(--border, rgba(255,255,255,.12))", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre" } }, code.join("\n")))); continue; }
+      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), style: { margin: "0 0 12px", background: "rgba(128,128,128,.14)", border: "1px solid rgba(128,128,128,.28)", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre", color: "inherit" } }, code.join("\n")))); continue; }
       var hd = /^(#{1,6})\s+(.*)$/.exec(line);
-      if (hd) { var lvl = hd[1].length; blocks.push(h("h" + Math.min(lvl, 6), { key: "h" + (key++), style: mdHeadingStyle(lvl) }, mdInline(hd[2].replace(/\s+#+\s*$/, "")))); i++; continue; }
-      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { blocks.push(h("hr", { key: "hr" + (key++), style: { border: "none", borderTop: "1px solid var(--border, rgba(255,255,255,.12))", margin: "14px 0" } })); i++; continue; }
-      if (/^\s*>\s?/.test(line)) { var qb = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { qb.push(lines[i].replace(/^\s*>\s?/, "")); i++; } blocks.push(h("blockquote", { key: "bq" + (key++), style: { margin: "0 0 10px", padding: "2px 12px", borderLeft: "3px solid var(--border, rgba(255,255,255,.2))", color: "var(--muted-fg, inherit)", opacity: .85 } }, mdBlocks(qb.join("\n")))); continue; }
+      if (hd) { var lvl = hd[1].length; blocks.push(h("h" + Math.min(lvl, 6), { key: "h" + (key++), style: mdHeadingStyle(lvl) }, mdInline(hd[2].replace(/\s+#+\s*$/, ""), onOpen))); i++; continue; }
+      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { blocks.push(h("hr", { key: "hr" + (key++), style: { border: "none", borderTop: "1px solid rgba(128,128,128,.28)", margin: "14px 0" } })); i++; continue; }
+      if (/^\s*>\s?/.test(line)) { var qb = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { qb.push(lines[i].replace(/^\s*>\s?/, "")); i++; } blocks.push(h("blockquote", { key: "bq" + (key++), style: { margin: "0 0 10px", padding: "2px 12px", borderLeft: "3px solid rgba(128,128,128,.4)", color: "var(--muted-fg, inherit)", opacity: .85 } }, mdBlocks(qb.join("\n"), onOpen))); continue; }
       if (/\|/.test(line) && i + 1 < lines.length && /\|/.test(lines[i + 1]) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
         var header = line; i += 2; var rows = [];
         while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim() !== "") { rows.push(lines[i]); i++; }
         var head = mdCells(header);
         blocks.push(h("div", { key: "tw" + (key++), style: { overflow: "auto", margin: "0 0 12px" } }, h("table", { style: { borderCollapse: "collapse", fontSize: 12.5, width: "100%" } },
-          h("thead", null, h("tr", null, head.map(function (c, ci) { return h("th", { key: ci, style: { border: "1px solid var(--border, rgba(255,255,255,.14))", padding: "6px 9px", textAlign: "left", background: "var(--muted, rgba(255,255,255,.05))" } }, mdInline(c)); }))),
-          h("tbody", null, rows.map(function (r, ri) { var cs = mdCells(r); return h("tr", { key: ri }, cs.map(function (c, ci) { return h("td", { key: ci, style: { border: "1px solid var(--border, rgba(255,255,255,.14))", padding: "6px 9px", verticalAlign: "top" } }, mdInline(c)); })); }))))); continue;
+          h("thead", null, h("tr", null, head.map(function (c, ci) { return h("th", { key: ci, style: { border: "1px solid rgba(128,128,128,.28)", padding: "6px 9px", textAlign: "left", background: "rgba(128,128,128,.12)" } }, mdInline(c, onOpen)); }))),
+          h("tbody", null, rows.map(function (r, ri) { var cs = mdCells(r); return h("tr", { key: ri }, cs.map(function (c, ci) { return h("td", { key: ci, style: { border: "1px solid rgba(128,128,128,.28)", padding: "6px 9px", verticalAlign: "top" } }, mdInline(c, onOpen)); })); }))))); continue;
       }
-      if (/^\s*(?:[-*+]|\d+\.)\s+/.test(line)) { var ll = []; while (i < lines.length && (/^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i]) || (/^\s+\S/.test(lines[i]) && ll.length))) { ll.push(lines[i]); i++; } blocks.push(mdList(ll, key++)); continue; }
+      if (/^\s*(?:[-*+]|\d+\.)\s+/.test(line)) { var ll = []; while (i < lines.length && (/^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i]) || (/^\s+\S/.test(lines[i]) && ll.length))) { ll.push(lines[i]); i++; } blocks.push(mdList(ll, key++, onOpen)); continue; }
       if (/^\s*$/.test(line)) { i++; continue; }
       var buf = [];
       while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6})\s+/.test(lines[i]) && !/^\s*```/.test(lines[i]) && !/^\s*>\s?/.test(lines[i]) && !/^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i]) && !/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
@@ -1033,7 +1034,7 @@
               h("div", { style: { width: 26, height: 26, borderRadius: "50%", background: bgMuted, border: "1px solid " + borderC, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "0 0 auto", textTransform: "uppercase" } }, (c.author || c.created_by || "?").slice(0, 2)),
               h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
                 h("div", { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 3 } }, h("span", { style: { fontSize: 12.5, fontWeight: 600 } }, c.author || c.created_by || "?"), h("span", { style: { color: muted, fontSize: 11 } }, ago(c.created_at, now) + " ago")),
-                h("div", { style: { fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" } }, linkifyPaths(c.body || c.text || "", openFilePreview))));
+                h("div", { style: { fontSize: 13, lineHeight: 1.55, wordBreak: "break-word" } }, mdBlocks(c.body || c.text || "", openFilePreview))));
           }))
         : muteSpan("\u2014 no comments \u2014");
       R.push(h("div", { key: "cm" }, section("Comments (" + comments.length + ")", null, commentList, { first: R.length === 0 })));
