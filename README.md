@@ -258,10 +258,19 @@ Clickable file paths in task descriptions, results, run summaries and comments
 open in a built-in mini viewer (Markdown/image/text, with in-file path
 navigation and a Back button).
 
+**Paths are only turned into links when the file or folder actually exists.**
+Before rendering a link, the plugin verifies the target — first by a direct
+lookup (listing the parent directory), and if that misses (agents often write
+paths with a missing prefix) by a bounded search of the file tree. Text that
+merely contains slashes (e.g. `ToS/robots.txt`, `Normalisierungs-/Dedupe-/…`,
+`WDR/mitvergnuegen/Stadtmarketing`) stays plain text. Each text→link decision is
+**cached** per candidate, so the same path isn't re-checked on every render;
+unresolved candidates still trigger the detailed search once.
+
 If the companion
 [Better Hermes File Explorer](https://github.com/LouisKlimek/Better-Hermes-File-Explorer)
 plugin is installed, the tasklist **detects it automatically** and instead
-deep-links paths straight into the Explorer — files via `…/files?file=<path>`
-and **folders** via `…/files?path=<dir>` (folder paths only become clickable
+deep-links paths straight into the Explorer — files via `…/file-explorer?file=<path>`
+and **folders** via `…/file-explorer?path=<dir>` (folder paths only become clickable
 when the Explorer is present). No configuration needed; without the Explorer the
 built-in viewer is used.
