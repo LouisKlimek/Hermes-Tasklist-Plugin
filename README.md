@@ -267,6 +267,16 @@ merely contains slashes (e.g. `ToS/robots.txt`, `Normalisierungs-/Dedupe-/…`,
 **cached** per candidate, so the same path isn't re-checked on every render;
 unresolved candidates still trigger the detailed search once. The lookup runs with high concurrency, and every resolved path is **cached server-side in this plugin's own SQLite DB** (`$HERMES_HOME/tasklist/lists.db`, table `path_cache`, via `/api/plugins/tasklist/pathcache`). So an expensive tree search runs at most once across **all** browsers, devices and page reloads — a path resolved once shows up as a link instantly next time, without re-searching. The cache is self-contained (this plugin never reads another plugin's data) and falls back to browser `localStorage` if the backend isn't reachable. Positive results are kept 7 days, negatives 1 hour; `DELETE /api/plugins/tasklist/pathcache` clears it. If the **File Explorer** plugin is also installed, on load this plugin *additionally* reads that plugin's cache (`/api/plugins/fileexplorer/pathcache`, best-effort, read-only) and reuses any paths it already resolved — so a search done in either plugin speeds up both. It still never writes to the other's DB, so the two remain fully independent.
 
+**Background pre-warming.** While the List page is open (even if you never click a
+task), a gentle background worker occasionally scans a few tickets' text
+— description, result, run summaries and comments — extracts any file/folder
+paths and resolves them into the cache **silently** (no visible change), so when
+you do open a ticket its links appear instantly. It's deliberately light: small
+batches spread out over time, paused while the tab is hidden or a ticket is open,
+and each ticket is remembered per-browser (localStorage ledger) so the same ones
+aren't re-scanned until stale (~6 h) — keeping the cache fresh without hammering
+the server.
+
 If the companion
 [Better Hermes File Explorer](https://github.com/LouisKlimek/Better-Hermes-File-Explorer)
 plugin is installed, the tasklist **detects it automatically** and instead

@@ -74,6 +74,26 @@
       window.localStorage.setItem(FX_LSKEY, JSON.stringify(o));
     } catch (e) {}
   }
+
+  // Pull path candidates (files, and folders when wanted) out of a blob of text,
+  // using the same shapes the renderer linkifies. URLs are stripped first so
+  // "https://…/a/b.md" fragments aren't mistaken for local paths.
+  function extractCandidates(text, wantFolders) {
+    var s = String(text == null ? "" : text).replace(/(?:https?:\/\/|www\.)[^\s<>()\[\]]+/g, " ");
+    var files = {}, folders = {}, m;
+    var fre = /(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}/g;
+    while ((m = fre.exec(s))) files[m[0]] = 1;
+    if (wantFolders) {
+      var dre = /(?:[\w.\-]+\/){2,}[\w.\-]+(?![\w.\-]*\.[A-Za-z0-9])/g;
+      while ((m = dre.exec(s))) { var pp = m[0].replace(/[.,;:!?]+$/, "").replace(/\/+$/, ""); if (pp) folders[pp] = 1; }
+    }
+    return { files: Object.keys(files), folders: Object.keys(folders) };
+  }
+
+  // Background-warmer ledger: which task ids were pre-scanned and when (per browser).
+  var WARM_LSKEY = "hermesTlWarmLedgerV1";
+  function warmLoad() { try { var raw = window.localStorage.getItem(WARM_LSKEY); var o = raw ? (JSON.parse(raw) || {}) : {}; return (o && typeof o === "object") ? o : {}; } catch (e) { return {}; } }
+  function warmSave(o) { try { var keys = Object.keys(o); if (keys.length > 4000) { keys.sort(function (a, b) { return (o[a].t || 0) - (o[b].t || 0); }); keys.slice(0, keys.length - 4000).forEach(function (k) { delete o[k]; }); } window.localStorage.setItem(WARM_LSKEY, JSON.stringify(o)); } catch (e) {} }
   function linkifyPaths(text, onOpen) {
     if (text == null || text === "") return text;
     var s = String(text);
@@ -430,6 +450,52 @@
         .then(function () { return other; })
         .then(function (r) { if (r) merge(r); cacheReadyRef.current = true; setPathV(function (v) { return v + 1; }); });
     }, []);
+
+    // ── background path pre-warmer ──
+    // While the List page is open, occasionally scan a few tickets' text and
+    // resolve their paths into the cache silently (no re-render), so opening a
+    // ticket later shows links instantly. Gentle by design: small batches, spread
+    // out, paused when the tab is hidden or a ticket modal is open, and each ticket
+    // is remembered (localStorage ledger) so the same ones aren't re-scanned until
+    // stale. Nothing here blocks or changes what the user sees.
+    var tasksRef = useRef([]);
+    var modalIdRef = useRef(null); modalIdRef.current = modalId;
+    var warmLedgerRef = useRef(null); if (warmLedgerRef.current === null) warmLedgerRef.current = warmLoad();
+    var warmTimerRef = useRef(null);
+    useEffect(function () {
+      var WARM_BATCH = 5, WARM_TTL = 21600000, SHORT = 15000, LONG = 300000, GAP = 350, MAXC = 40, INIT = 3500;
+      var stopped = false;
+      function runWarm() {
+        warmTimerRef.current = null;
+        if (stopped) return;
+        var hidden = (typeof document !== "undefined" && document.hidden);
+        if (hidden || !cacheReadyRef.current || modalIdRef.current) { warmTimerRef.current = setTimeout(runWarm, hidden ? LONG : SHORT); return; }
+        var now = Date.now(), ledger = warmLedgerRef.current || (warmLedgerRef.current = {});
+        var list = (tasksRef.current || []).filter(function (t) { if (!t || !t.id) return false; var e = ledger[t.id]; return !e || (now - (e.t || 0)) > WARM_TTL; });
+        if (!list.length) { warmTimerRef.current = setTimeout(runWarm, LONG); return; }
+        list.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); }); // newest first (most likely to be opened)
+        var batch = list.slice(0, WARM_BATCH), more = list.length > batch.length;
+        var handler = makePathHandler(false), wantFolders = !!handler.folders, i = 0;
+        function step() {
+          if (stopped) return;
+          if (i >= batch.length) { warmSave(warmLedgerRef.current); warmTimerRef.current = setTimeout(runWarm, more ? SHORT : LONG); return; }
+          var t = batch[i++];
+          getJSON(KAPI + "/tasks/" + encodeURIComponent(t.id) + (boardRef.current ? ("?board=" + encodeURIComponent(boardRef.current)) : "")).then(function (d) {
+            var tk = (d && d.task) || t, texts = [];
+            if (tk.body) texts.push(tk.body);
+            if (tk.result) texts.push(tk.result);
+            ((d && d.runs) || []).forEach(function (r) { if (r && r.summary) texts.push(r.summary); });
+            ((d && d.comments) || []).forEach(function (c) { if (c && c.body) texts.push(c.body); });
+            texts.forEach(function (tx) { var ex = extractCandidates(tx, wantFolders); ex.files.slice(0, MAXC).forEach(function (f) { handler.ensure(f, true, true); }); ex.folders.slice(0, MAXC).forEach(function (fd) { handler.ensure(fd, false, true); }); });
+          }).catch(function () { }).then(function () { warmLedgerRef.current[t.id] = { t: Date.now() }; if (!stopped) setTimeout(step, GAP); });
+        }
+        step();
+      }
+      warmTimerRef.current = setTimeout(runWarm, INIT);
+      function onVis() { if (typeof document !== "undefined" && !document.hidden && !warmTimerRef.current && !stopped) warmTimerRef.current = setTimeout(runWarm, 1200); }
+      if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVis);
+      return function () { stopped = true; if (warmTimerRef.current) { clearTimeout(warmTimerRef.current); warmTimerRef.current = null; } if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVis); };
+    }, []);
     var searchChainRef = useRef(Promise.resolve());
     s = useState(0); var pathV = s[0], setPathV = s[1];
     var dragRef = useRef(null);
@@ -502,6 +568,7 @@
     }, [showArchived]);
 
     var tasks = useMemo(function () { if (!data || !data.columns) return []; var o = []; data.columns.forEach(function (c) { (c.tasks || []).forEach(function (t) { o.push(t); }); }); return o; }, [data]);
+    tasksRef.current = tasks;
     var boardCols = useMemo(function () { var a = []; if (data && data.columns) data.columns.forEach(function (c) { if (c && c.name) a.push(c.name); }); return a; }, [data]);
     var liveStatusOrder = useMemo(function () { var order = [], seen = {}; function add(s) { if (s && !seen[s]) { seen[s] = 1; order.push(s); } } boardCols.forEach(add); tasks.forEach(function (t) { add(t.status); }); if (!order.length) STATUS_ORDER.forEach(add); return order; }, [boardCols, tasks]);
     var settableStatuses = useMemo(function () { var base = boardCols.length ? boardCols.slice() : SETTABLE.slice(); return base.filter(function (s) { return s !== "archived"; }); }, [boardCols]);
@@ -752,7 +819,7 @@
       var fn = function (p) { var t = fn.resolvedOf(p); if (installed) { try { window.open(explorerHref(t), "_blank", "noopener"); } catch (e) { window.location.href = explorerHref(t); } } else if (isFilePath(t)) { if (navMode) navFilePreview(t); else openFilePreview(t); } };
       fn.folders = installed;
       fn.known = function (cand) { var e = pathValidRef.current[cand]; return e ? e.state : undefined; };
-      fn.ensure = function (cand, isF) { if (!cacheReadyRef.current) return; if (pathValidRef.current[cand]) return; pathValidRef.current[cand] = { state: "pending" }; validatePath(cand, isF).then(function (res) { var rec = res.valid ? { state: "valid", resolved: res.resolved } : { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); setPathV(function (v) { return v + 1; }); }).catch(function () { var rec = { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); setPathV(function (v) { return v + 1; }); }); };
+      fn.ensure = function (cand, isF, silent) { if (!cacheReadyRef.current) return; if (pathValidRef.current[cand]) return; pathValidRef.current[cand] = { state: "pending" }; validatePath(cand, isF).then(function (res) { var rec = res.valid ? { state: "valid", resolved: res.resolved } : { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); if (!silent) setPathV(function (v) { return v + 1; }); }).catch(function () { var rec = { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); if (!silent) setPathV(function (v) { return v + 1; }); }); };
       fn.resolvedOf = function (cand) { var e = pathValidRef.current[cand]; return (e && e.resolved) || cand; };
       fn.hrefFor = function (p) { var t = fn.resolvedOf(p); return installed ? explorerHref(t) : (isFilePath(t) ? filesDownloadHref(t) : "#"); };
       return fn;
