@@ -488,8 +488,9 @@
       if (du && isText) { var b64 = String(du).split(",")[1] || ""; try { text = decodeURIComponent(escape(atob(b64))); } catch (e) { try { text = atob(b64); } catch (_) { text = null; } } }
       return { name: r && r.name, mime: mime, size: r && r.size, dataUrl: du, text: text };
     }
-    function readFile(p) { return getJSON("/api/files/read?path=" + encodeURIComponent(p)); }
-    function listDir(rel) { return getJSON("/api/files" + (rel ? ("?path=" + encodeURIComponent(rel)) : "")).catch(function () { return null; }); }
+    function filesGet(pq) { var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var opts = tok ? { headers: { "Authorization": "Bearer " + tok } } : {}; return authFetch(pq, opts).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }); }
+    function readFile(p) { return filesGet("/api/files/read?path=" + encodeURIComponent(p)); }
+    function listDir(rel) { return filesGet("/api/files" + (rel ? ("?path=" + encodeURIComponent(rel)) : "")).catch(function () { return null; }); }
     // Agents often write paths relative to their working dir (prefix missing).
     // Walk the managed file tree and find the file whose path ends with the given relative path.
     function resolveFilePath(relRaw) {
