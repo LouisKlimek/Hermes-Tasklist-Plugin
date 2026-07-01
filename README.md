@@ -14,6 +14,16 @@ It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.
 
 ---
 
+## Status colours (live from Kanban)
+
+Status dot colours are read at runtime from the Kanban plugin's own stylesheet
+(`/dashboard-plugins/kanban/dist/style.css`) via its `.hermes-kanban-dot-*` classes,
+so the List and graph always match the board and **stay in sync automatically if the
+Kanban colours are changed** later. The plugin loads that stylesheet if it isn't
+already present and reads each status's colour from the live class; if the sheet is
+unavailable it falls back to the current Kanban values (triage lilac, todo grey,
+ready amber, running green, blocked red, done blue, archived grey).
+
 ## List & Dependency-graph views
 
 A **List / Graph** switch in the header toggles between the normal list and a

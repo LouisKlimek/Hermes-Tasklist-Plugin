@@ -32,11 +32,14 @@
   var POLL_MS = 4000;
 
   var STATUS_ORDER = ["triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done", "archived"];
+  // Fallback dot colors mirror the Kanban plugin's style.css (.hermes-kanban-dot-*)
+  // so they're right even if that stylesheet fails to load; at runtime we read the
+  // real colors from those classes (see KANBAN_COLORS below) so future CSS edits win.
   var STATUS = {
-    triage: { label: "Triage", dot: "#a1a1aa" }, todo: { label: "To Do", dot: "#94a3b8" },
-    scheduled: { label: "Scheduled", dot: "#818cf8" }, ready: { label: "Ready", dot: "#38bdf8" },
-    running: { label: "Running", dot: "#fbbf24" }, blocked: { label: "Blocked", dot: "#f87171" },
-    review: { label: "Review", dot: "#c084fc" }, done: { label: "Done", dot: "#34d399" }, archived: { label: "Archived", dot: "#52525b" }
+    triage: { label: "Triage", dot: "#b47dd6" }, todo: { label: "To Do", dot: "#9ca3af" },
+    scheduled: { label: "Scheduled", dot: "#9ca3af" }, ready: { label: "Ready", dot: "#d4b348" },
+    running: { label: "Running", dot: "#3fb97d" }, blocked: { label: "Blocked", dot: "#d14a4a" },
+    review: { label: "Review", dot: "#9ca3af" }, done: { label: "Done", dot: "#4a8cd1" }, archived: { label: "Archived", dot: "#6b7280" }
   };
   var SETTABLE = ["triage", "todo", "scheduled", "ready", "blocked", "review", "done"];
   var LIST_COLORS = ["#38bdf8", "#34d399", "#fbbf24", "#f87171", "#c084fc", "#fb923c", "#818cf8", "#2dd4bf"];
@@ -45,7 +48,33 @@
   var STATUS_PALETTE = ["#38bdf8", "#34d399", "#fbbf24", "#f87171", "#c084fc", "#fb923c", "#818cf8", "#2dd4bf", "#94a3b8"];
   function prettyStatus(s) { return String(s || "").replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim().replace(/\b\w/g, function (m) { return m.toUpperCase(); }); }
   function statusColor(s) { var h = 0; s = String(s || ""); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return STATUS_PALETTE[h % STATUS_PALETTE.length]; }
-  function statusMeta(s) { if (STATUS[s]) return STATUS[s]; if (!s) return { label: "?", dot: "#71717a" }; return { label: prettyStatus(s), dot: statusColor(s) }; }
+  // Live colors read from the Kanban stylesheet's dot classes; overrides fallbacks.
+  var KANBAN_COLORS = {};
+  function statusMeta(s) { var base = STATUS[s] || { label: (s ? prettyStatus(s) : "?"), dot: (s ? statusColor(s) : "#71717a") }; return { label: base.label, dot: KANBAN_COLORS[s] || base.dot }; }
+  // Ensure the Kanban plugin's stylesheet is present so its .hermes-kanban-dot-* rules apply.
+  function ensureKanbanStyles(cb) {
+    try {
+      if (typeof document === "undefined") { cb && cb(); return; }
+      var links = document.querySelectorAll('link[rel="stylesheet"]');
+      for (var i = 0; i < links.length; i++) { if ((links[i].getAttribute("href") || "").indexOf("/dashboard-plugins/kanban/dist/style.css") !== -1) { cb && cb(); return; } }
+      var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || "";
+      var link = document.createElement("link"); link.rel = "stylesheet"; link.href = base + "/dashboard-plugins/kanban/dist/style.css"; link.setAttribute("data-tl-kanban-css", "1");
+      link.onload = function () { cb && cb(); }; link.onerror = function () { cb && cb(); };
+      document.head.appendChild(link);
+    } catch (e) { cb && cb(); }
+  }
+  // Read each status colour straight from the live .hermes-kanban-dot-<status> class.
+  function readKanbanColors() {
+    var out = {};
+    try {
+      if (typeof document === "undefined" || !window.getComputedStyle) return out;
+      var host = document.createElement("div"); host.style.cssText = "position:absolute;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;pointer-events:none";
+      document.body.appendChild(host);
+      STATUS_ORDER.forEach(function (s) { var sp = document.createElement("span"); sp.className = "hermes-kanban-dot hermes-kanban-dot-" + s; host.appendChild(sp); var c = window.getComputedStyle(sp).backgroundColor; if (c && c !== "rgba(0, 0, 0, 0)" && c !== "transparent") out[s] = c; });
+      document.body.removeChild(host);
+    } catch (e) {}
+    return out;
+  }
   function priorityBucket(p) { p = p == null ? 0 : p; if (p >= 3) return { label: "Urgent", color: "#f87171" }; if (p === 2) return { label: "High", color: "#fb923c" }; if (p === 1) return { label: "Normal", color: "#38bdf8" }; return { label: "Low", color: "#71717a" }; }
   function ago(e, now) { if (e == null) return ""; var d = Math.max(0, (now || Math.floor(Date.now() / 1000)) - e); if (d < 60) return d + "s"; if (d < 3600) return Math.floor(d / 60) + "m"; if (d < 86400) return Math.floor(d / 3600) + "h"; if (d < 2592000) return Math.floor(d / 86400) + "d"; return Math.floor(d / 2592000) + "mo"; }
   function whenFull(e) { if (e == null) return ""; try { return new Date(e * 1000).toLocaleString(); } catch (x) { return String(e); } }
@@ -399,7 +428,36 @@
     s = useState(1); var graphZoom = s[0], setGraphZoom = s[1];
     s = useState(null); var graphHover = s[0], setGraphHover = s[1];
     s = useState(false); var graphAnim = s[0], setGraphAnim = s[1];   // brief entrance-animation window
+    s = useState(0); var colorV = s[0], setColorV = s[1];   // bumps when live Kanban colors are read
+    useEffect(function () {
+      var cancelled = false;
+      function apply() { if (cancelled) return; var c = readKanbanColors(); var changed = false; Object.keys(c).forEach(function (k) { if (KANBAN_COLORS[k] !== c[k]) { KANBAN_COLORS[k] = c[k]; changed = true; } }); if (changed) setColorV(function (v) { return v + 1; }); }
+      ensureKanbanStyles(function () { apply(); setTimeout(apply, 250); setTimeout(apply, 900); });
+      return function () { cancelled = true; };
+    }, []);
     useEffect(function () { if (view !== "graph") { setGraphAnim(false); return; } setGraphAnim(true); var to = setTimeout(function () { setGraphAnim(false); }, 1500); return function () { clearTimeout(to); }; }, [view]);
+    // SVG <text> can't use the theme's --foreground directly: in this theme it's an
+    // HSL *triplet* ("210 40% 98%"), which is an invalid color for `fill`, and
+    // `currentColor` doesn't inherit a usable color at the SVG. So read the variable
+    // at runtime from an in-tree probe and build a valid CSS color from it.
+    s = useState("#e5e7eb"); var fgColor = s[0], setFgColor = s[1];
+    var fgProbeRef = useRef(null);
+    useEffect(function () {
+      if (view !== "graph") return;
+      try {
+        var el = fgProbeRef.current; if (!el || typeof window === "undefined" || !window.getComputedStyle) return;
+        var cs = window.getComputedStyle(el);
+        function rv(n) { return (cs.getPropertyValue(n) || "").trim(); }
+        var f = rv("--foreground") || rv("--card-foreground") || rv("--popover-foreground");
+        var col = "";
+        if (f) {
+          if (/^(#|rgb|hsl|[a-zA-Z]+$)/.test(f)) col = f;                              // already a color
+          else if (f.indexOf("%") !== -1) col = "hsl(" + f + ")";                      // HSL triplet "H S% L%"
+          else if (/^[\d.]+\s+[\d.]+\s+[\d.]+$/.test(f)) col = "rgb(" + f.replace(/\s+/g, ",") + ")"; // RGB triplet
+        }
+        if (col && col !== fgColor) setFgColor(col);
+      } catch (e) {}
+    }, [view, graphModel]);
     s = useState(""); var search = s[0], setSearch = s[1];
     s = useState(""); var fAssignee = s[0], setFAssignee = s[1];
     s = useState(false); var showArchived = s[0], setShowArchived = s[1];
@@ -1340,9 +1398,9 @@
       var hi = null;
       if (graphHover && pos[graphHover]) { var anc = reach(graphHover, par), des = reach(graphHover, chi); hi = {}; hi[graphHover] = 1; Object.keys(anc).forEach(function (k) { hi[k] = 1; }); Object.keys(des).forEach(function (k) { hi[k] = 1; }); }
       function nodeState(id) { var t = taskById[id]; if (!t) return "ready"; if (t.status === "done") return "done"; var ps = par[id]; if (!ps || !ps.length) return "ready"; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return "blocked"; } return "ready"; }
-      var stateColor = { done: "#34d399", ready: accent, blocked: "#f87171" };
+      var stateColor = { done: statusMeta("done").dot, ready: statusMeta("ready").dot, blocked: statusMeta("blocked").dot };
       var stateLabel = { done: "Done", ready: "Ready", blocked: "Blocked" };
-      var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = "var(--foreground, #e5e7eb)";
+      var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = fgColor || "#e5e7eb";
       var maxChars = Math.max(6, Math.floor((NODE_W - 52) / 6.7));
       // edges
       var edgeEls = gm.edges.map(function (e, i) {
@@ -1357,7 +1415,7 @@
         return h("path", { key: "e" + i, className: cls, d: "M" + x1 + "," + y1 + " C" + (x1 + dx) + "," + y1 + " " + (x2 - dx) + "," + y2 + " " + x2 + "," + y2, fill: "none", stroke: col, strokeWidth: hi && on ? 2 : 1.3, opacity: hi ? (on ? 0.95 : 0.12) : 0.5, markerEnd: hi && on ? "url(#tl-arrow-hi)" : "url(#tl-arrow)", style: style });
       });
       // stage headers
-      var stageEls = []; for (var L = 0; L <= gm.maxLevel; L++) { var cx = 26 + L * (NODE_W + 88) + NODE_W / 2; stageEls.push(h("text", { key: "st" + L, className: graphAnim ? "tl-stage" : null, x: cx, y: 20, textAnchor: "middle", fill: muted, fontSize: 11, fontWeight: 600, style: graphAnim ? { letterSpacing: ".04em", animationDelay: (L * 55) + "ms" } : { letterSpacing: ".04em" } }, "Stage " + (L + 1))); }
+      var stageEls = []; for (var L = 0; L <= gm.maxLevel; L++) { var cx = 26 + L * (NODE_W + 88) + NODE_W / 2; stageEls.push(h("text", { key: "st" + L, className: graphAnim ? "tl-stage" : null, x: cx, y: 20, textAnchor: "middle", fill: "currentColor", opacity: 0.6, fontSize: 11, fontWeight: 600, style: graphAnim ? { letterSpacing: ".04em", animationDelay: (L * 55) + "ms" } : { letterSpacing: ".04em" } }, "Stage " + (L + 1))); }
       // nodes
       var nodeEls = gm.ids.map(function (id) {
         var t = taskById[id]; if (!t) return null; var p = pos[id]; var st = nodeState(id); var sc = stateColor[st];
@@ -1372,7 +1430,7 @@
             h("rect", { x: 0, y: 0, width: 5, height: NODE_H, rx: 2.5, ry: 2.5, fill: dm.dot }),
             h("circle", { className: (st === "ready" && !dim) ? "tl-pulse" : null, cx: 22, cy: NODE_H / 2 - 8, r: 4.5, fill: sc }),
             h("text", { x: 34, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
-            h("text", { x: 34, y: NODE_H / 2 + 14, fill: muted, fontSize: 10.5 }, sub)));
+            h("text", { x: 34, y: NODE_H / 2 + 14, fill: "currentColor", opacity: 0.62, fontSize: 10.5 }, sub)));
       });
       var svg = h("svg", { width: gm.W * graphZoom, height: gm.H * graphZoom, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
         h("defs", null,
@@ -1386,6 +1444,7 @@
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } }, legendDot(stateColor.ready, "Ready"), legendDot(stateColor.blocked, "Blocked (waiting on a parent)"), legendDot(stateColor.done, "Done")),
         h("span", { style: { fontSize: 11.5, color: muted } }, "Left \u2192 right = dependency order \u00b7 click a task to open \u00b7 hover to trace its chain"));
       return h("div", null, controls,
+        h("span", { ref: fgProbeRef, "aria-hidden": "true", style: { position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0, pointerEvents: "none" } }, "\u200b"),
         h("div", { style: { border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, overflow: "auto", maxHeight: "calc(100vh - 250px)", padding: 6 } }, svg));
     }
 
