@@ -79,7 +79,7 @@
       { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /\*([^*]+)\*/, mk: function (m) { return h("em", { key: "i" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /~~([^~]+)~~/, mk: function (m) { return h("del", { key: "s" + (key++) }, mdInline(m[1], onOpen)); } },
-      { re: /\[([^\]]+)\]\(([^)\s]+)\)/, mk: function (m) { return h("a", { key: "l" + (key++), href: m[2], target: "_blank", rel: "noopener noreferrer", style: { color: accent, textDecoration: "underline" } }, m[1]); } }
+      { re: /\[([^\]]+)\]\(([^)\s]+)\)/, mk: function (m) { return h("a", { key: "l" + (key++), href: m[2], target: "_blank", rel: "noopener noreferrer", onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline" } }, m[1]); } }
     ];
     if (onOpen) pats.push({ re: /((?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8})/, mk: function (m) { var pp = m[1]; return h("a", { key: "fp" + (key++), href: filesDownloadHref(pp), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" } }, pp); } });
     var guard = 0;
@@ -949,7 +949,7 @@
               h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Cancel")))
         : h("div", { className: "tl-editable", onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, title: "Click to edit", style: { position: "relative", padding: "12px 14px", minHeight: 46 } },
             task.body
-              ? h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.65 } }, linkifyPaths(task.body, openFilePreview))
+              ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(task.body, openFilePreview))
               : h("span", { style: { fontSize: 13.5, color: muted, fontStyle: "italic" } }, "Add a description\u2026"),
             h("span", { className: "tl-penhint", style: { position: "absolute", top: 9, right: 11, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: muted, pointerEvents: "none" } }, PencilIcon(12), "Edit"));
       L.push(h("div", { key: "desc" }, section("Description", null, descBody, { first: true })));
@@ -971,7 +971,7 @@
       L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
-      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 } }, linkifyPaths(task.result, openFilePreview)))));
+      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { fontSize: 13, lineHeight: 1.6, wordBreak: "break-word" } }, mdBlocks(task.result, openFilePreview)))));
 
       // ---- Attachments -------------------------------------------------------
       var atts = (d && d.attachments) || [];
@@ -1022,7 +1022,7 @@
               r.profile ? h("span", { style: { color: muted } }, "@" + r.profile) : null,
               dur ? h("span", { style: { color: muted, fontSize: 11 } }, dur) : null,
               h("span", { style: { color: muted, fontSize: 11, marginLeft: "auto" } }, ago(r.ended_at || r.started_at, now) + " ago")),
-            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, linkifyPaths(r.summary, openFilePreview)) : null,
+            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, mdBlocks(r.summary, openFilePreview)) : null,
             r.error ? h("div", { style: { marginTop: 4, color: "#f87171", fontSize: 12.5 } }, r.error) : null);
         }));
         R.push(h("div", { key: "runs" }, section("Run history (" + runs.length + ")", null, runBody, { first: R.length === 0 })));
