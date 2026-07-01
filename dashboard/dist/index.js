@@ -343,6 +343,7 @@
     s = useState(null); var confirmDelList = s[0], setConfirmDelList = s[1];
     s = useState(null); var filePreview = s[0], setFilePreview = s[1];
     s = useState(false); var previewRaw = s[0], setPreviewRaw = s[1];
+    s = useState([]); var filePreviewStack = s[0], setFilePreviewStack = s[1];
     s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
     s = useState(null); var draft = s[0], setDraft = s[1];
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
@@ -381,6 +382,7 @@
     var lastEvent = useRef(-1);
     var boardRef = useRef(board); boardRef.current = board;
     var filePreviewRef = useRef(null); filePreviewRef.current = filePreview;
+    var filePreviewStackRef = useRef([]); filePreviewStackRef.current = filePreviewStack;
     var resolveCacheRef = useRef({});
     var dragRef = useRef(null);
 
@@ -480,7 +482,7 @@
     useEffect(function () { if (modalId) { loadDetail(modalId, true); loadWorkerLog(modalId); } }, [modalId]); // eslint-disable-line
     useEffect(function () {
       if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? (t.title || "") : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
-      function onKey(e) { if (e.key === "Escape") { if (filePreviewRef.current) { setFilePreview(null); } else setModalId(null); } }
+      function onKey(e) { if (e.key === "Escape") { if (filePreviewRef.current) { if (filePreviewStackRef.current && filePreviewStackRef.current.length) backFilePreview(); else closeFilePreview(); } else setModalId(null); } }
       window.addEventListener("keydown", onKey); return function () { window.removeEventListener("keydown", onKey); };
     }, [modalId]); // eslint-disable-line
 
@@ -615,7 +617,7 @@
         return pick || false;
       });
     }
-    function openFilePreview(path) {
+    function loadFilePreview(path) {
       var clean = String(path).replace(/^\/+/, "");
       setPreviewRaw(false);
       setFilePreview({ path: path, loading: true });
@@ -632,6 +634,10 @@
         }).catch(function () { setFilePreview({ path: path, loading: false, err: "not found" }); });
       });
     }
+    function openFilePreview(path) { setFilePreviewStack([]); loadFilePreview(path); }
+    function navFilePreview(path) { var cur = filePreviewRef.current; if (cur) setFilePreviewStack(function (st) { return st.concat([cur]); }); loadFilePreview(path); }
+    function backFilePreview() { var st = filePreviewStackRef.current || []; if (!st.length) { setFilePreview(null); return; } var prev = st[st.length - 1]; setFilePreviewStack(st.slice(0, -1)); setPreviewRaw(false); setFilePreview(prev); }
+    function closeFilePreview() { setFilePreview(null); setFilePreviewStack([]); }
     function archiveTask(id, toStatus) {
       if (!id) return;
       setNotice(null);
@@ -1195,21 +1201,22 @@
               h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", maxHeight: "70vh", height: "auto", objectFit: "contain", borderRadius: 6, boxShadow: "0 4px 18px rgba(0,0,0,.35)" } })),
             h("div", { style: { fontSize: 11, color: muted } }, (fp.mime || "image") + (fp.size ? " \u00b7 " + fmtBytes(fp.size) : "")))
         : (fp.text != null) ? ((isMd && !previewRaw)
-            ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(fp.text))
+            ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(fp.text, navFilePreview))
             : h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text))
         : h("div", { style: { color: muted, fontSize: 13, lineHeight: 1.6 } }, "No inline preview for this file type (" + (fp.mime || "unknown") + "). Use the Download button to open it.");
       var mdToggle = (isMd && fp.text != null) ? h("button", { onClick: function () { setPreviewRaw(!previewRaw); }, title: previewRaw ? "Show rendered markdown" : "Show raw text", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, cursor: "pointer" } }, previewRaw ? "Rendered" : "Raw") : null;
-      return h(Portal, { onClose: function () { setFilePreview(null); } },
-        h("div", { onClick: function () { setFilePreview(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483300, background: "rgba(0,0,0,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } },
+      return h(Portal, { onClose: function () { closeFilePreview(); } },
+        h("div", { onClick: function () { closeFilePreview(); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483300, background: "rgba(0,0,0,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } },
           h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(900px, 96vw)", height: isNarrow ? "100vh" : "86vh", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column", overflow: "hidden" } },
             h("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+              filePreviewStack.length ? h("button", { onClick: function () { backFilePreview(); }, title: "Back to previous file (Esc)", style: { flex: "0 0 auto", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "7px 10px", fontSize: 12.5, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 } }, h("span", { style: { fontSize: 14, lineHeight: 1 } }, "\u2190"), "Back") : null,
               h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
                 h("div", { style: { fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, fp.name || fp.path),
                 h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: fp.path }, fp.path),
                 fp.orig ? h("div", { style: { fontSize: 10.5, color: muted, marginTop: 1 } }, "auto-resolved from \u201c" + fp.orig + "\u201d") : null),
               mdToggle,
               h("a", { href: filesDownloadHref(fp.path), target: "_blank", rel: "noopener noreferrer", style: { flex: "0 0 auto", textDecoration: "none", background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 13px", fontSize: 12.5 } }, "Download"),
-              h("button", { onClick: function () { setFilePreview(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex" } }, XIcon(20))),
+              h("button", { onClick: function () { closeFilePreview(); }, "data-tl-close": "1", title: "Close (Esc)", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex" } }, XIcon(20))),
             h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "14px 16px" : "18px 22px" } }, body))));
     }
 
