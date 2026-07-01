@@ -496,25 +496,40 @@
     function resolveFilePath(relRaw) {
       var rel = String(relRaw).replace(/^\/+/, "");
       if (rel in resolveCacheRef.current) return Promise.resolve(resolveCacheRef.current[rel]);
-      var base = rel.split("/").pop();
+      var segs = rel.split("/");
+      var base = segs[segs.length - 1];
+      var firstDir = segs.length > 1 ? segs[0] : null;          // first directory segment of the target
+      var restAfterFirst = segs.slice(1).join("/");             // rel without its first segment
+      var relDirSet = {}; segs.slice(0, -1).forEach(function (s) { relDirSet[s] = 1; }); // target's directory segments
       var SKIP = { "node_modules": 1, ".git": 1, "__pycache__": 1, "site-packages": 1, ".venv": 1, "venv": 1, ".cache": 1, ".npm": 1, ".mypy_cache": 1, "dist": 1, ".next": 1, "build": 1 };
-      var rootPath = null, listings = 0, MAX = 200, MAX_DEPTH = 9;
-      var queue = [{ d: "", depth: 0 }], seen = { "": 1 }, basenameHits = [];
+      var rootPath = null, listings = 0, MAX = 600, MAX_DEPTH = 14;
+      var pq = [], nq = [], seen = { "": 1 }; nq.push({ d: "", depth: 0 });
+      var basenameHits = [], directTried = {};
       function relOf(e) { if (rootPath && e.path && e.path.indexOf(rootPath) === 0) return e.path.slice(rootPath.length).replace(/^\/+/, ""); return e.name; }
+      function enqueue(d, depth) { if (seen[d]) return; seen[d] = 1; var nm = d.split("/").pop(); (relDirSet[nm] ? pq : nq).push({ d: d, depth: depth }); }
+      function tryDirect(candidate) { if (directTried[candidate]) return Promise.resolve(null); directTried[candidate] = 1; return readFile(candidate).then(function () { return candidate; }).catch(function () { return null; }); }
       function loop() {
-        if (!queue.length || listings >= MAX) return Promise.resolve(null);
-        var wave = []; while (queue.length && wave.length < 6 && listings < MAX) { wave.push(queue.shift()); listings++; }
+        if ((!pq.length && !nq.length) || listings >= MAX) return Promise.resolve(null);
+        var wave = [];
+        while ((pq.length || nq.length) && wave.length < 8 && listings < MAX) { wave.push(pq.length ? pq.shift() : nq.shift()); listings++; }
         return Promise.all(wave.map(function (item) {
           return listDir(item.d).then(function (r) {
             if (!r) return null;
             if (rootPath == null && r.root) rootPath = r.root;
-            var found = null;
+            var found = null, cands = [];
             (r.entries || []).forEach(function (e) {
               var rr = relOf(e);
-              if (e.is_directory) { if (item.depth < MAX_DEPTH && !SKIP[e.name] && !seen[rr]) { seen[rr] = 1; queue.push({ d: rr, depth: item.depth + 1 }); } }
-              else { if (rr === rel || rr.length > rel.length && rr.slice(-(rel.length + 1)) === ("/" + rel)) found = rr; else if (e.name === base) basenameHits.push(rr); }
+              if (e.is_directory) {
+                if (firstDir && e.name === firstDir) cands.push(restAfterFirst ? (rr + "/" + restAfterFirst) : rr); // spotted the target's first dir -> read full candidate directly
+                if (item.depth < MAX_DEPTH && !SKIP[e.name]) enqueue(rr, item.depth + 1);
+              } else {
+                if (rr === rel || (rr.length > rel.length && rr.slice(-(rel.length + 1)) === "/" + rel)) found = rr;
+                else if (e.name === base) basenameHits.push(rr);
+              }
             });
-            return found;
+            if (found) return found;
+            if (cands.length) return Promise.all(cands.map(tryDirect)).then(function (rs) { return rs.filter(Boolean)[0] || null; });
+            return null;
           });
         })).then(function (results) { var hit = results.filter(Boolean)[0]; return hit ? hit : loop(); });
       }
@@ -522,7 +537,7 @@
         var pick = hit;
         if (!pick && basenameHits.length) {
           if (basenameHits.length === 1) pick = basenameHits[0];
-          else { var lastDir = rel.split("/").slice(-2)[0]; var better = basenameHits.filter(function (p) { return lastDir && p.indexOf("/" + lastDir + "/") !== -1; }); if (better.length === 1) pick = better[0]; }
+          else { var lastDir = segs.slice(-2)[0]; var better = basenameHits.filter(function (p) { return lastDir && p.indexOf("/" + lastDir + "/") !== -1; }); if (better.length === 1) pick = better[0]; }
         }
         resolveCacheRef.current[rel] = pick || false;
         return pick || false;
