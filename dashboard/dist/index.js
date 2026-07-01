@@ -74,7 +74,7 @@
   function mdInline(s, onOpen) {
     var out = [], rest = String(s == null ? "" : s), key = 0;
     var pats = [
-      { re: /`([^`]+)`/, mk: function (m) { return h("code", { key: "c" + (key++), style: mdCodeStyle() }, m[1]); } },
+      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp)) { return h("a", { key: "cl" + (key++), href: filesDownloadHref(pp), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }) }, inner); } return h("code", { key: "c" + (key++), style: mdCodeStyle() }, inner); } },
       { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /\*([^*]+)\*/, mk: function (m) { return h("em", { key: "i" + (key++) }, mdInline(m[1], onOpen)); } },
