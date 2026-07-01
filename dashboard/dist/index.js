@@ -70,6 +70,76 @@
     return out;
   }
 
+  function mdCodeStyle() { return { fontFamily: "var(--font-courier, monospace)", fontSize: "0.92em", background: "var(--muted, rgba(255,255,255,.06))", borderRadius: 4, padding: "1px 5px" }; }
+  function mdInline(s) {
+    var out = [], rest = String(s == null ? "" : s), key = 0;
+    var pats = [
+      { re: /`([^`]+)`/, mk: function (m) { return h("code", { key: "c" + (key++), style: mdCodeStyle() }, m[1]); } },
+      { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1])); } },
+      { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1])); } },
+      { re: /\*([^*]+)\*/, mk: function (m) { return h("em", { key: "i" + (key++) }, mdInline(m[1])); } },
+      { re: /~~([^~]+)~~/, mk: function (m) { return h("del", { key: "s" + (key++) }, mdInline(m[1])); } },
+      { re: /\[([^\]]+)\]\(([^)\s]+)\)/, mk: function (m) { return h("a", { key: "l" + (key++), href: m[2], target: "_blank", rel: "noopener noreferrer", style: { color: accent, textDecoration: "underline" } }, m[1]); } }
+    ];
+    var guard = 0;
+    while (rest && guard++ < 5000) {
+      var best = null;
+      for (var p = 0; p < pats.length; p++) { pats[p].re.lastIndex = 0; var m = pats[p].re.exec(rest); if (m && (best === null || m.index < best.m.index)) best = { p: pats[p], m: m }; }
+      if (!best) { out.push(rest); break; }
+      if (best.m.index > 0) out.push(rest.slice(0, best.m.index));
+      out.push(best.p.mk(best.m));
+      rest = rest.slice(best.m.index + best.m[0].length);
+    }
+    return out;
+  }
+  function mdHeadingStyle(lvl) { var sizes = [21, 17.5, 15.5, 14, 13, 12.5]; return { margin: lvl <= 2 ? "18px 0 8px" : "14px 0 6px", fontSize: sizes[lvl - 1] || 13, fontWeight: 700, lineHeight: 1.3, borderBottom: lvl <= 2 ? "1px solid var(--border, rgba(255,255,255,.12))" : "none", paddingBottom: lvl <= 2 ? 5 : 0 }; }
+  function mdCells(l) { var t = l.trim().replace(/^\|/, "").replace(/\|$/, ""); return t.split("|").map(function (c) { return c.trim(); }); }
+  function mdList(lines, k) {
+    var indents = lines.map(function (l) { return /^(\s*)/.exec(l)[1].length; });
+    var minI = Math.min.apply(null, indents);
+    var ordered = new RegExp("^\\s{" + minI + "}\\d+\\.\\s+").test(lines[0]);
+    var items = [], cur = null;
+    lines.forEach(function (l) {
+      var indent = /^(\s*)/.exec(l)[1].length;
+      var m = /^\s*(?:[-*+]|\d+\.)\s+(.*)$/.exec(l);
+      if (indent <= minI && m) { if (cur) items.push(cur); cur = { text: m[1], children: [] }; }
+      else if (cur) cur.children.push(l);
+    });
+    if (cur) items.push(cur);
+    return h(ordered ? "ol" : "ul", { key: "L" + k, style: { margin: "0 0 10px", paddingLeft: 22, lineHeight: 1.6 } }, items.map(function (it, idx) {
+      var kids = it.children.length ? mdBlocks(it.children.map(function (c) { return c.replace(new RegExp("^\\s{0," + (minI + 2) + "}"), ""); }).join("\n")) : null;
+      return h("li", { key: idx, style: { marginBottom: 3 } }, mdInline(it.text), kids);
+    }));
+  }
+  function mdBlocks(md) {
+    var lines = String(md == null ? "" : md).replace(/\r\n?/g, "\n").split("\n");
+    var blocks = [], i = 0, key = 0;
+    function para(buf) { if (buf.length) blocks.push(h("p", { key: "p" + (key++), style: { margin: "0 0 10px", lineHeight: 1.65 } }, mdInline(buf.join(" ")))); }
+    while (i < lines.length) {
+      var line = lines[i];
+      var fence = /^\s*```/.test(line);
+      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), style: { margin: "0 0 12px", background: "var(--muted, rgba(255,255,255,.06))", border: "1px solid var(--border, rgba(255,255,255,.12))", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre" } }, code.join("\n")))); continue; }
+      var hd = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (hd) { var lvl = hd[1].length; blocks.push(h("h" + Math.min(lvl, 6), { key: "h" + (key++), style: mdHeadingStyle(lvl) }, mdInline(hd[2].replace(/\s+#+\s*$/, "")))); i++; continue; }
+      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { blocks.push(h("hr", { key: "hr" + (key++), style: { border: "none", borderTop: "1px solid var(--border, rgba(255,255,255,.12))", margin: "14px 0" } })); i++; continue; }
+      if (/^\s*>\s?/.test(line)) { var qb = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { qb.push(lines[i].replace(/^\s*>\s?/, "")); i++; } blocks.push(h("blockquote", { key: "bq" + (key++), style: { margin: "0 0 10px", padding: "2px 12px", borderLeft: "3px solid var(--border, rgba(255,255,255,.2))", color: "var(--muted-fg, inherit)", opacity: .85 } }, mdBlocks(qb.join("\n")))); continue; }
+      if (/\|/.test(line) && i + 1 < lines.length && /\|/.test(lines[i + 1]) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+        var header = line; i += 2; var rows = [];
+        while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim() !== "") { rows.push(lines[i]); i++; }
+        var head = mdCells(header);
+        blocks.push(h("div", { key: "tw" + (key++), style: { overflow: "auto", margin: "0 0 12px" } }, h("table", { style: { borderCollapse: "collapse", fontSize: 12.5, width: "100%" } },
+          h("thead", null, h("tr", null, head.map(function (c, ci) { return h("th", { key: ci, style: { border: "1px solid var(--border, rgba(255,255,255,.14))", padding: "6px 9px", textAlign: "left", background: "var(--muted, rgba(255,255,255,.05))" } }, mdInline(c)); }))),
+          h("tbody", null, rows.map(function (r, ri) { var cs = mdCells(r); return h("tr", { key: ri }, cs.map(function (c, ci) { return h("td", { key: ci, style: { border: "1px solid var(--border, rgba(255,255,255,.14))", padding: "6px 9px", verticalAlign: "top" } }, mdInline(c)); })); }))))); continue;
+      }
+      if (/^\s*(?:[-*+]|\d+\.)\s+/.test(line)) { var ll = []; while (i < lines.length && (/^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i]) || (/^\s+\S/.test(lines[i]) && ll.length))) { ll.push(lines[i]); i++; } blocks.push(mdList(ll, key++)); continue; }
+      if (/^\s*$/.test(line)) { i++; continue; }
+      var buf = [];
+      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6})\s+/.test(lines[i]) && !/^\s*```/.test(lines[i]) && !/^\s*>\s?/.test(lines[i]) && !/^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i]) && !/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
+      para(buf);
+    }
+    return blocks;
+  }
+
   function Caret(open, sz) { sz = sz || 12; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round", style: { transition: "transform .12s", transform: open ? "rotate(90deg)" : "none", flex: "0 0 auto" } }, h("polyline", { points: "9 6 15 12 9 18" })); }
   function Dot(c, s) { return h("span", { style: { display: "inline-block", width: (s || 8) + "px", height: (s || 8) + "px", borderRadius: "50%", background: c, flex: "0 0 auto" } }); }
   function Grip() { return h("svg", { width: 11, height: 11, viewBox: "0 0 24 24", fill: "currentColor", style: { flex: "0 0 auto", opacity: .5 } }, h("circle", { cx: 9, cy: 6, r: 1.6 }), h("circle", { cx: 15, cy: 6, r: 1.6 }), h("circle", { cx: 9, cy: 12, r: 1.6 }), h("circle", { cx: 15, cy: 12, r: 1.6 }), h("circle", { cx: 9, cy: 18, r: 1.6 }), h("circle", { cx: 15, cy: 18, r: 1.6 })); }
@@ -257,7 +327,7 @@
     s = useState(null); var dropList = s[0], setDropList = s[1];
 
     s = useState(rd(LS_GROUPBY, "status")); var groupBy = s[0], setGroupBy = s[1];
-    s = useState("priority"); var sortBy = s[0], setSortBy = s[1];
+    s = useState("created"); var sortBy = s[0], setSortBy = s[1];
     s = useState("desc"); var sortDir = s[0], setSortDir = s[1];
     s = useState(""); var search = s[0], setSearch = s[1];
     s = useState(""); var fAssignee = s[0], setFAssignee = s[1];
@@ -271,6 +341,7 @@
     s = useState(null); var confirmDel = s[0], setConfirmDel = s[1];
     s = useState(null); var confirmDelList = s[0], setConfirmDelList = s[1];
     s = useState(null); var filePreview = s[0], setFilePreview = s[1];
+    s = useState(false); var previewRaw = s[0], setPreviewRaw = s[1];
     s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
     s = useState(null); var draft = s[0], setDraft = s[1];
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
@@ -545,6 +616,7 @@
     }
     function openFilePreview(path) {
       var clean = String(path).replace(/^\/+/, "");
+      setPreviewRaw(false);
       setFilePreview({ path: path, loading: true });
       readFile(clean).then(function (r) {
         setFilePreview(Object.assign({ path: clean, loading: false }, parseRead(clean, r)));
@@ -1113,11 +1185,15 @@
     function filePreviewModal() {
       if (!filePreview) return null;
       var fp = filePreview;
+      var isMd = /markdown/i.test(fp.mime || "") || /\.(md|markdown)$/i.test(fp.name || fp.path || "");
       var body = fp.loading ? h("div", { style: { color: muted, fontSize: 13 } }, fp.searching ? "File not at that path \u2014 searching the file tree\u2026" : "Loading\u2026")
         : fp.err ? h("div", { style: { color: "#f87171", fontSize: 13, lineHeight: 1.6 } }, "Could not open file: " + fp.err + (fp.searchedNoMatch ? " (no match found by searching either)" : "") + ". You can still try the Download button.")
-        : (fp.text != null) ? h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text)
+        : (fp.text != null) ? ((isMd && !previewRaw)
+            ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(fp.text))
+            : h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text))
         : (/^image\//.test(fp.mime || "") && fp.dataUrl) ? h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", height: "auto", borderRadius: 8 } })
         : h("div", { style: { color: muted, fontSize: 13, lineHeight: 1.6 } }, "No inline preview for this file type (" + (fp.mime || "unknown") + "). Use the Download button to open it.");
+      var mdToggle = (isMd && fp.text != null) ? h("button", { onClick: function () { setPreviewRaw(!previewRaw); }, title: previewRaw ? "Show rendered markdown" : "Show raw text", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, cursor: "pointer" } }, previewRaw ? "Rendered" : "Raw") : null;
       return h(Portal, { onClose: function () { setFilePreview(null); } },
         h("div", { onClick: function () { setFilePreview(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483300, background: "rgba(0,0,0,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } },
           h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(900px, 96vw)", height: isNarrow ? "100vh" : "86vh", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column", overflow: "hidden" } },
@@ -1126,6 +1202,7 @@
                 h("div", { style: { fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, fp.name || fp.path),
                 h("div", { style: { fontSize: 11, color: muted, fontFamily: "var(--font-courier, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: fp.path }, fp.path),
                 fp.orig ? h("div", { style: { fontSize: 10.5, color: muted, marginTop: 1 } }, "auto-resolved from \u201c" + fp.orig + "\u201d") : null),
+              mdToggle,
               h("a", { href: filesDownloadHref(fp.path), target: "_blank", rel: "noopener noreferrer", style: { flex: "0 0 auto", textDecoration: "none", background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 13px", fontSize: 12.5 } }, "Download"),
               h("button", { onClick: function () { setFilePreview(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex" } }, XIcon(20))),
             h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "14px 16px" : "18px 22px" } }, body))));
