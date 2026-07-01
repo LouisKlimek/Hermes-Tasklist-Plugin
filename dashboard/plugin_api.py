@@ -13,11 +13,12 @@ The dashboard imports this module and mounts ``router`` at
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -353,5 +354,259 @@ def clear_path_cache():
         c.execute("DELETE FROM path_cache")
         c.commit()
         return {"ok": True, "cleared": n}
+    finally:
+        c.close()
+
+
+# --------------------------------------------------------------------------- #
+# server-side path WARMING  (mounted at /api/plugins/tasklist/warm + /pathresolve)
+#
+# The browser used to pre-resolve file/folder paths mentioned in tickets by
+# walking the /api/files HTTP tree — many requests per candidate. That work is
+# moved here: this process runs inside the Hermes container and can read the
+# real files root (/opt/data) straight off disk. We build an in-memory index of
+# every file/dir once (cheap, cached), read ticket text directly from kanban.db,
+# extract path candidates, resolve them against the index, and fill path_cache.
+# The browser then just pokes /warm occasionally and reads the cache — no tree
+# walking in the client at all.
+# --------------------------------------------------------------------------- #
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]]+")
+_FILE_RE = re.compile(r"(?:[\w.\-]+/)+[\w.\-]+\.[A-Za-z0-9]{1,8}")
+_DIR_RE = re.compile(r"(?:[\w.\-]+/){2,}[\w.\-]+(?![\w.\-]*\.[A-Za-z0-9])")
+_TEXT_COLS = {"body", "result", "summary", "content", "text", "description", "notes", "output", "details", "message"}
+_INDEX_TTL = 300          # rebuild the file index at most every 5 minutes
+_INDEX_MAX = 300000       # safety cap on indexed entries
+_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".cache", ".mypy_cache", ".pytest_cache"}
+_index_cache: dict = {"root": None, "t": 0.0, "idx": None}
+
+
+def _files_root() -> Optional[str]:
+    """Locate the Hermes files root that /api/files serves (default /opt/data)."""
+    for k in ("HERMES_FILES_ROOT", "HERMES_DATA_ROOT", "HERMES_FILES_DIR"):
+        v = os.environ.get(k)
+        if v and os.path.isdir(v):
+            return v
+    if os.path.isdir("/opt/data"):
+        return "/opt/data"
+    return None
+
+
+def _build_index(root: str) -> dict:
+    files_by: dict = {}
+    dirs_by: dict = {}
+    fileset: set = set()
+    dirset: set = set()
+    count = 0
+    for dp, dns, fns in os.walk(root):
+        dns[:] = [d for d in dns if not d.startswith(".") and d not in _SKIP_DIRS]
+        rel_dir = os.path.relpath(dp, root)
+        if rel_dir == ".":
+            rel_dir = ""
+        if rel_dir:
+            dirset.add(rel_dir)
+            dirs_by.setdefault(os.path.basename(rel_dir), []).append(rel_dir)
+        for f in fns:
+            if f.startswith("."):
+                continue
+            rp = (rel_dir + "/" + f) if rel_dir else f
+            fileset.add(rp)
+            files_by.setdefault(f, []).append(rp)
+            count += 1
+            if count > _INDEX_MAX:
+                break
+        if count > _INDEX_MAX:
+            break
+    return {"files": files_by, "dirs": dirs_by, "fileset": fileset, "dirset": dirset}
+
+
+def _get_index(root: str) -> dict:
+    now = time.time()
+    if (_index_cache["idx"] is not None and _index_cache["root"] == root
+            and (now - _index_cache["t"]) < _INDEX_TTL):
+        return _index_cache["idx"]
+    idx = _build_index(root)
+    _index_cache.update({"root": root, "t": now, "idx": idx})
+    return idx
+
+
+def _resolve(cand: str, is_file: bool, idx: dict) -> Optional[str]:
+    """Return the real relative path a candidate points at, or None if not found.
+
+    Mirrors the browser heuristic: exact match, then a path-suffix match, then a
+    basename+immediate-parent match, then a unique-basename match.
+    """
+    cand = (cand or "").strip().strip("/")
+    if not cand:
+        return None
+    fullset = idx["fileset"] if is_file else idx["dirset"]
+    buckets = idx["files"] if is_file else idx["dirs"]
+    if cand in fullset:
+        return cand
+    base = cand.rsplit("/", 1)[-1]
+    lst = buckets.get(base)
+    if not lst:
+        return None
+    suf = [p for p in lst if p == cand or p.endswith("/" + cand)]
+    if suf:
+        return min(suf, key=len)
+    if "/" in cand:
+        parent_seg = cand.rsplit("/", 2)[-2]
+        pm = [p for p in lst if parent_seg and (("/" + parent_seg + "/") in ("/" + p + "/"))]
+        if len(pm) == 1:
+            return pm[0]
+        if pm:
+            return min(pm, key=len)
+    if len(lst) == 1:
+        return lst[0]
+    return None
+
+
+def _extract(text: str):
+    if not text:
+        return set(), set()
+    s = _URL_RE.sub(" ", str(text))
+    files = set(_FILE_RE.findall(s))
+    dirs = set()
+    for m in _DIR_RE.finditer(s):
+        d = m.group(0).rstrip(".,;:!?").rstrip("/")
+        if not d or d in files:
+            continue
+        base = d.rsplit("/", 1)[-1]
+        if re.search(r"\.[A-Za-z0-9]{1,8}$", base):   # ends like a file -> not a folder
+            continue
+        dirs.add(d)
+    return files, dirs
+
+
+def _read_kanban_texts(slug: Optional[str], cap_chars: int = 4_000_000) -> List[str]:
+    """Best-effort read of all path-bearing text columns across kanban.db."""
+    path = _kanban_db_path(slug)
+    out: List[str] = []
+    total = 0
+    try:
+        if not path or not path.exists():
+            return out
+        kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            tables = [r[0] for r in kc.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")]
+            for tbl in tables:
+                try:
+                    cols = [r[1] for r in kc.execute(f'PRAGMA table_info("{tbl}")')]
+                except Exception:
+                    continue
+                sel = [c for c in cols if c.lower() in _TEXT_COLS]
+                if not sel:
+                    continue
+                collist = ",".join('"' + c + '"' for c in sel)
+                try:
+                    for row in kc.execute(f'SELECT {collist} FROM "{tbl}"'):
+                        for v in row:
+                            if isinstance(v, str) and v:
+                                out.append(v)
+                                total += len(v)
+                                if total > cap_chars:
+                                    return out
+                except Exception:
+                    continue
+        finally:
+            kc.close()
+    except Exception:
+        pass
+    return out
+
+
+def _pc_upsert(c, cand: str, resolved: Optional[str], now: int) -> None:
+    c.execute(
+        "INSERT INTO path_cache (cand, state, resolved, updated_at) VALUES (?,?,?,?) "
+        "ON CONFLICT(cand) DO UPDATE SET state=excluded.state, "
+        "  resolved=excluded.resolved, updated_at=excluded.updated_at",
+        (cand, "valid" if resolved else "invalid", resolved, now),
+    )
+
+
+@router.post("/warm")
+def warm_paths(board: Optional[str] = Query(None)):
+    """Resolve every file/folder path mentioned in this board's tickets, server-side.
+
+    Reads ticket text from kanban.db, resolves candidates against an in-memory
+    index of the files root, and fills path_cache. No /api/files calls at all.
+    """
+    root = _files_root()
+    if not root:
+        return {"ok": False, "reason": "no files root", "candidates": 0, "resolved": 0}
+    idx = _get_index(root)
+    slug = _board(board)
+    files: set = set()
+    dirs: set = set()
+    for t in _read_kanban_texts(slug):
+        f, d = _extract(t)
+        files |= f
+        dirs |= d
+    now = int(time.time())
+    resolved = 0
+    c = _conn()
+    try:
+        for cand in files:
+            r = _resolve(cand, True, idx)
+            _pc_upsert(c, cand, r, now)
+            resolved += 1 if r else 0
+        for cand in dirs:
+            r = _resolve(cand, False, idx)
+            _pc_upsert(c, cand, r, now)
+            resolved += 1 if r else 0
+        n = c.execute("SELECT COUNT(*) AS n FROM path_cache").fetchone()["n"]
+        if n > _PC_MAX_ROWS:
+            c.execute(
+                "DELETE FROM path_cache WHERE cand IN ("
+                "  SELECT cand FROM path_cache ORDER BY updated_at ASC LIMIT ?)",
+                (n - _PC_MAX_ROWS,),
+            )
+        c.commit()
+        return {
+            "ok": True,
+            "root": root,
+            "candidates": len(files) + len(dirs),
+            "resolved": resolved,
+            "files": len(files),
+            "dirs": len(dirs),
+            "indexed": len(idx["fileset"]) + len(idx["dirset"]),
+        }
+    finally:
+        c.close()
+
+
+class ResolveItem(BaseModel):
+    cand: str
+    is_file: bool = True
+
+
+class ResolveBody(BaseModel):
+    items: List[ResolveItem] = []
+
+
+@router.post("/pathresolve")
+def path_resolve(body: ResolveBody):
+    """Resolve a handful of candidates on demand (server-side, no /api/files).
+
+    Returns {"ok": bool, "entries": {cand: {state, resolved}}}. When the files
+    root can't be found the browser should fall back to its own tree search.
+    """
+    root = _files_root()
+    if not root:
+        return {"ok": False, "root": None, "entries": {}}
+    idx = _get_index(root)
+    now = int(time.time())
+    out: dict = {}
+    c = _conn()
+    try:
+        for it in (body.items or [])[:300]:
+            if not it.cand:
+                continue
+            r = _resolve(it.cand, bool(it.is_file), idx)
+            _pc_upsert(c, it.cand, r, now)
+            out[it.cand] = {"state": "valid" if r else "invalid", "resolved": r}
+        c.commit()
+        return {"ok": True, "root": root, "entries": out}
     finally:
         c.close()

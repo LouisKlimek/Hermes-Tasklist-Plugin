@@ -36,9 +36,7 @@ all its parents), so it reads Gantt-like left → right as "this can only start 
 its parents are done", while multiple incoming edges are shown cleanly. Each stage
 column is labelled (Stage 1, 2, 3 …).
 
-Each node is a calm neutral card with a **status dot** in the live Kanban colour;
-its dependency **readiness** (Ready / Blocked / Done) is shown as a coloured text
-label rather than a heavy border, so status and readiness never clash. Click a node to open that task; hover to trace its full ancestor/descendant
+Each node shows its **one real status** — the dot and the label agree (both use the live Kanban colour/label), so there's never a “blocked dot but Ready text” contradiction. Dependency blocking is a separate signal: any task waiting on an unfinished parent gets a **bold pulsing red outline** and a “waiting on a parent” note, so blockers stand out at a glance. Click a node to open that task; hover to trace its full ancestor/descendant
 chain (others dim). Navigate like an image editor: **scroll or pinch to zoom toward the cursor**, and **drag to pan** around the canvas; +/- buttons, a **Fit to screen** button (⛶) and a reset are also there, and the graph auto-frames itself when you open the view. Hold **Space** to pan from anywhere (Photoshop-style), which also suppresses task-opening clicks while held. Large graphs stay smooth because the SVG is memoised — panning and zooming only transform the viewport, they don't redraw the nodes. Entering the graph plays a
 staggered entrance (nodes fade/scale in left → right, edges draw themselves in),
 hovering flows animated dashes along the highlighted chain, ready nodes pulse
@@ -298,15 +296,16 @@ merely contains slashes (e.g. `ToS/robots.txt`, `Normalisierungs-/Dedupe-/…`,
 **cached** per candidate, so the same path isn't re-checked on every render;
 unresolved candidates still trigger the detailed search once. The lookup runs with high concurrency, and every resolved path is **cached server-side in this plugin's own SQLite DB** (`$HERMES_HOME/tasklist/lists.db`, table `path_cache`, via `/api/plugins/tasklist/pathcache`). So an expensive tree search runs at most once across **all** browsers, devices and page reloads — a path resolved once shows up as a link instantly next time, without re-searching. The cache is self-contained (this plugin never reads another plugin's data) and falls back to browser `localStorage` if the backend isn't reachable. Positive results are kept 7 days, negatives 1 hour; `DELETE /api/plugins/tasklist/pathcache` clears it. If the **File Explorer** plugin is also installed, on load this plugin *additionally* reads that plugin's cache (`/api/plugins/fileexplorer/pathcache`, best-effort, read-only) and reuses any paths it already resolved — so a search done in either plugin speeds up both. It still never writes to the other's DB, so the two remain fully independent.
 
-**Background pre-warming.** While the List page is open (even if you never click a
-task), a gentle background worker occasionally scans a few tickets' text
-— description, result, run summaries and comments — extracts any file/folder
-paths and resolves them into the cache **silently** (no visible change), so when
-you do open a ticket its links appear instantly. It's deliberately light: small
-batches spread out over time, paused while the tab is hidden or a ticket is open,
-and each ticket is remembered per-browser (localStorage ledger) so the same ones
-aren't re-scanned until stale (~6 h) — keeping the cache fresh without hammering
-the server.
+**Background pre-warming (server-side).** File/folder paths mentioned in tickets
+are pre-resolved into the cache by the plugin **backend**, not the browser. The
+backend reads ticket text straight from ``kanban.db`` and resolves each path
+against an in-memory index of the files root (``/opt/data`` by default, override
+with ``HERMES_FILES_ROOT``) — no ``/api/files`` tree-walking in the client at all.
+While the List page is open the browser just calls ``POST /warm`` every few
+minutes and merges the freshly-resolved cache, so opening a ticket shows its links
+instantly. There is also ``POST /pathresolve`` for resolving a few candidates on
+demand. Because the resolution runs directly on disk it's effectively free
+compared with the old per-candidate HTTP walk.
 
 If the companion
 [Better Hermes File Explorer](https://github.com/LouisKlimek/Better-Hermes-File-Explorer)

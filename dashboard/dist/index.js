@@ -104,25 +104,6 @@
     } catch (e) {}
   }
 
-  // Pull path candidates (files, and folders when wanted) out of a blob of text,
-  // using the same shapes the renderer linkifies. URLs are stripped first so
-  // "https://…/a/b.md" fragments aren't mistaken for local paths.
-  function extractCandidates(text, wantFolders) {
-    var s = String(text == null ? "" : text).replace(/(?:https?:\/\/|www\.)[^\s<>()\[\]]+/g, " ");
-    var files = {}, folders = {}, m;
-    var fre = /(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}/g;
-    while ((m = fre.exec(s))) files[m[0]] = 1;
-    if (wantFolders) {
-      var dre = /(?:[\w.\-]+\/){2,}[\w.\-]+(?![\w.\-]*\.[A-Za-z0-9])/g;
-      while ((m = dre.exec(s))) { var pp = m[0].replace(/[.,;:!?]+$/, "").replace(/\/+$/, ""); if (pp) folders[pp] = 1; }
-    }
-    return { files: Object.keys(files), folders: Object.keys(folders) };
-  }
-
-  // Background-warmer ledger: which task ids were pre-scanned and when (per browser).
-  var WARM_LSKEY = "hermesTlWarmLedgerV1";
-  function warmLoad() { try { var raw = window.localStorage.getItem(WARM_LSKEY); var o = raw ? (JSON.parse(raw) || {}) : {}; return (o && typeof o === "object") ? o : {}; } catch (e) { return {}; } }
-  function warmSave(o) { try { var keys = Object.keys(o); if (keys.length > 4000) { keys.sort(function (a, b) { return (o[a].t || 0) - (o[b].t || 0); }); keys.slice(0, keys.length - 4000).forEach(function (k) { delete o[k]; }); } window.localStorage.setItem(WARM_LSKEY, JSON.stringify(o)); } catch (e) {} }
   function linkifyPaths(text, onOpen) {
     if (text == null || text === "") return text;
     var s = String(text);
@@ -277,7 +258,9 @@
         + ".tl-gedge.flow{animation:tl-flow .8s linear infinite}"
         + ".tl-pulse{animation:tl-pulse 2.1s ease-in-out infinite}"
         + ".tl-stage{animation:tl-fade-in .5s ease both}"
-        + "@media (prefers-reduced-motion: reduce){.tl-gnode.in,.tl-gedge.in,.tl-gedge.flow,.tl-pulse,.tl-stage{animation:none!important}.tl-gnode{transition:none}}"
+        + "@keyframes tl-blocked{0%,100%{opacity:1}50%{opacity:.28}}"
+        + ".tl-blocked{animation:tl-blocked 1.1s ease-in-out infinite}"
+        + "@media (prefers-reduced-motion: reduce){.tl-gnode.in,.tl-gedge.in,.tl-gedge.flow,.tl-pulse,.tl-stage,.tl-blocked{animation:none!important}.tl-gnode{transition:none}}"
         + ".tl-space,.tl-space *{cursor:grab!important}.tl-panning,.tl-panning *{cursor:grabbing!important}";
       document.head.appendChild(st);
     } catch (e) {}
@@ -520,48 +503,30 @@
         .then(function (r) { if (r) merge(r); cacheReadyRef.current = true; setPathV(function (v) { return v + 1; }); });
     }, []);
 
-    // ── background path pre-warmer ──
-    // While the List page is open, occasionally scan a few tickets' text and
-    // resolve their paths into the cache silently (no re-render), so opening a
-    // ticket later shows links instantly. Gentle by design: small batches, spread
-    // out, paused when the tab is hidden or a ticket modal is open, and each ticket
-    // is remembered (localStorage ledger) so the same ones aren't re-scanned until
-    // stale. Nothing here blocks or changes what the user sees.
-    var tasksRef = useRef([]);
-    var modalIdRef = useRef(null); modalIdRef.current = modalId;
-    var warmLedgerRef = useRef(null); if (warmLedgerRef.current === null) warmLedgerRef.current = warmLoad();
+    // ── background path pre-warmer (now server-side) ──
+    // The heavy work moved into the plugin backend: it reads ticket text straight
+    // from kanban.db and resolves every file/folder path against the files root on
+    // disk — zero /api/files tree-walking in the browser. Here we just poke /warm
+    // occasionally while the List page is open, then merge the freshly-resolved
+    // cache so links light up without a reload. Paused while the tab is hidden.
     var warmTimerRef = useRef(null);
     useEffect(function () {
-      var WARM_BATCH = 5, WARM_TTL = 21600000, SHORT = 15000, LONG = 300000, GAP = 350, MAXC = 40, INIT = 3500;
+      var INIT = 4000, LONG = 300000, HIDDEN = 300000;
       var stopped = false;
-      function runWarm() {
-        warmTimerRef.current = null;
-        if (stopped) return;
-        var hidden = (typeof document !== "undefined" && document.hidden);
-        if (hidden || !cacheReadyRef.current || modalIdRef.current) { warmTimerRef.current = setTimeout(runWarm, hidden ? LONG : SHORT); return; }
-        var now = Date.now(), ledger = warmLedgerRef.current || (warmLedgerRef.current = {});
-        var list = (tasksRef.current || []).filter(function (t) { if (!t || !t.id) return false; var e = ledger[t.id]; return !e || (now - (e.t || 0)) > WARM_TTL; });
-        if (!list.length) { warmTimerRef.current = setTimeout(runWarm, LONG); return; }
-        list.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); }); // newest first (most likely to be opened)
-        var batch = list.slice(0, WARM_BATCH), more = list.length > batch.length;
-        var handler = makePathHandler(false), wantFolders = !!handler.folders, i = 0;
-        function step() {
-          if (stopped) return;
-          if (i >= batch.length) { warmSave(warmLedgerRef.current); warmTimerRef.current = setTimeout(runWarm, more ? SHORT : LONG); return; }
-          var t = batch[i++];
-          getJSON(KAPI + "/tasks/" + encodeURIComponent(t.id) + (boardRef.current ? ("?board=" + encodeURIComponent(boardRef.current)) : "")).then(function (d) {
-            var tk = (d && d.task) || t, texts = [];
-            if (tk.body) texts.push(tk.body);
-            if (tk.result) texts.push(tk.result);
-            ((d && d.runs) || []).forEach(function (r) { if (r && r.summary) texts.push(r.summary); });
-            ((d && d.comments) || []).forEach(function (c) { if (c && c.body) texts.push(c.body); });
-            texts.forEach(function (tx) { var ex = extractCandidates(tx, wantFolders); ex.files.slice(0, MAXC).forEach(function (f) { handler.ensure(f, true, true); }); ex.folders.slice(0, MAXC).forEach(function (fd) { handler.ensure(fd, false, true); }); });
-          }).catch(function () { }).then(function () { warmLedgerRef.current[t.id] = { t: Date.now() }; if (!stopped) setTimeout(step, GAP); });
-        }
-        step();
+      function mergeCache() {
+        return getJSON(TLAPI + "/pathcache" + tlq(boardRef.current)).then(function (r) {
+          var e = (r && r.entries) || {}, changed = false;
+          Object.keys(e).forEach(function (k) { var cur = pathValidRef.current[k]; var nv = { state: e[k].state, resolved: e[k].resolved }; if (!cur || cur.state !== nv.state || cur.resolved !== nv.resolved) { pathValidRef.current[k] = nv; changed = true; } });
+          if (changed) setPathV(function (v) { return v + 1; });
+        }).catch(function () { });
       }
-      warmTimerRef.current = setTimeout(runWarm, INIT);
-      function onVis() { if (typeof document !== "undefined" && !document.hidden && !warmTimerRef.current && !stopped) warmTimerRef.current = setTimeout(runWarm, 1200); }
+      function cycle() {
+        warmTimerRef.current = null; if (stopped) return;
+        if (typeof document !== "undefined" && document.hidden) { warmTimerRef.current = setTimeout(cycle, HIDDEN); return; }
+        send("POST", TLAPI + "/warm" + tlq(boardRef.current), {}).then(function () { return mergeCache(); }).catch(function () { }).then(function () { if (!stopped) warmTimerRef.current = setTimeout(cycle, LONG); });
+      }
+      warmTimerRef.current = setTimeout(cycle, INIT);
+      function onVis() { if (typeof document !== "undefined" && !document.hidden && !warmTimerRef.current && !stopped) warmTimerRef.current = setTimeout(cycle, 1500); }
       if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVis);
       return function () { stopped = true; if (warmTimerRef.current) { clearTimeout(warmTimerRef.current); warmTimerRef.current = null; } if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVis); };
     }, []);
@@ -638,7 +603,6 @@
     }, [showArchived]);
 
     var tasks = useMemo(function () { if (!data || !data.columns) return []; var o = []; data.columns.forEach(function (c) { (c.tasks || []).forEach(function (t) { o.push(t); }); }); return o; }, [data]);
-    tasksRef.current = tasks;
     var boardCols = useMemo(function () { var a = []; if (data && data.columns) data.columns.forEach(function (c) { if (c && c.name) a.push(c.name); }); return a; }, [data]);
     var liveStatusOrder = useMemo(function () { var order = [], seen = {}; function add(s) { if (s && !seen[s]) { seen[s] = 1; order.push(s); } } boardCols.forEach(add); tasks.forEach(function (t) { add(t.status); }); if (!order.length) STATUS_ORDER.forEach(add); return order; }, [boardCols, tasks]);
     var settableStatuses = useMemo(function () { var base = boardCols.length ? boardCols.slice() : SETTABLE.slice(); return base.filter(function (s) { return s !== "archived"; }); }, [boardCols]);
@@ -1389,9 +1353,11 @@
       function reach(start, adj) { var out = {}, st = (adj[start] || []).slice(); while (st.length) { var x = st.pop(); if (out[x]) continue; out[x] = 1; (adj[x] || []).forEach(function (n) { st.push(n); }); } return out; }
       var hi = null;
       if (graphHover && pos[graphHover]) { var anc = reach(graphHover, par), des = reach(graphHover, chi); hi = {}; hi[graphHover] = 1; Object.keys(anc).forEach(function (k) { hi[k] = 1; }); Object.keys(des).forEach(function (k) { hi[k] = 1; }); }
-      function nodeState(id) { var t = taskById[id]; if (!t) return "ready"; if (t.status === "done") return "done"; var ps = par[id]; if (!ps || !ps.length) return "ready"; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return "blocked"; } return "ready"; }
-      var stateText = { done: statusMeta("done").dot, ready: statusMeta("ready").dot, blocked: statusMeta("blocked").dot };
-      var stateLabel = { done: "Done", ready: "Ready", blocked: "Blocked" };
+      // A task's own status is the single source of truth. Separately, it's
+      // "dependency-blocked" when it isn't done yet but at least one parent isn't
+      // done — that's what the pulsing red outline flags.
+      function depBlocked(id) { var t = taskById[id]; if (!t || t.status === "done") return false; var ps = par[id]; if (!ps || !ps.length) return false; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return true; } return false; }
+      var BLOCK_COL = "#ef4444";
       var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = "currentColor";
       var maxChars = Math.max(6, Math.floor((NODE_W - 52) / 6.7));
       var edgeEls = gm.edges.map(function (e, i) {
@@ -1407,19 +1373,21 @@
       });
       var stageEls = []; for (var L = 0; L <= gm.maxLevel; L++) { var cx = 26 + L * (NODE_W + 88) + NODE_W / 2; stageEls.push(h("text", { key: "st" + L, className: graphAnim ? "tl-stage" : null, x: cx, y: 20, textAnchor: "middle", fill: "currentColor", opacity: 0.6, fontSize: 11, fontWeight: 600, style: graphAnim ? { letterSpacing: ".04em", animationDelay: (L * 55) + "ms" } : { letterSpacing: ".04em" } }, "Stage " + (L + 1))); }
       var nodeEls = gm.ids.map(function (id) {
-        var t = taskById[id]; if (!t) return null; var p = pos[id]; var st = nodeState(id);
-        var dim = hi && !hi[id]; var hov = graphHover === id;
+        var t = taskById[id]; if (!t) return null; var p = pos[id];
+        var dim = hi && !hi[id]; var hov = graphHover === id; var blk = depBlocked(id);
         var dm = statusMeta(t.status); var title = String(t.title || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "\u2026";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
         var rest = (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
         return h("g", { key: id, transform: "translate(" + p.x + "," + p.y + ")" },
           h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { if (suppressClickRef.current || spaceRef.current) return; setModalId(id); }, onMouseEnter: function () { if (panningRef.current) return; setGraphHover(id); }, onMouseLeave: function () { if (panningRef.current) return; setGraphHover(null); } },
-            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: hov ? accent : borderC, strokeWidth: hov ? 2.2 : 1.3 }),
-            h("circle", { className: (st === "ready" && !dim) ? "tl-pulse" : null, cx: 21, cy: NODE_H / 2, r: 5, fill: dm.dot }),
+            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: blk ? BLOCK_COL : (hov ? accent : borderC), strokeWidth: blk ? 2.4 : (hov ? 2.2 : 1.3) }),
+            blk ? h("rect", { className: "tl-blocked", width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: "none", stroke: BLOCK_COL, strokeWidth: 2.6 }) : null,
+            h("circle", { cx: 21, cy: NODE_H / 2, r: 5, fill: dm.dot }),
             h("text", { x: 36, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
             h("text", { x: 36, y: NODE_H / 2 + 14, fontSize: 10.5 },
-              h("tspan", { fill: stateText[st], fontWeight: 600 }, stateLabel[st]),
+              h("tspan", { fill: dm.dot, fontWeight: 600 }, dm.label),
+              blk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, "  \u00b7  waiting on a parent") : null,
               rest ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null)));
       });
       return h("svg", { width: gm.W, height: gm.H, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
@@ -1477,7 +1445,9 @@
       function legendDot(c, lbl) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: muted } }, h("span", { style: { width: 9, height: 9, borderRadius: 3, background: "transparent", border: "2px solid " + c } }), lbl); }
       var controls = h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u26f6", graphFit, "Fit to screen"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
-        h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } }, legendDot(statusMeta("ready").dot, "Ready"), legendDot(statusMeta("blocked").dot, "Blocked (waiting on a parent)"), legendDot(statusMeta("done").dot, "Done")),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
+          h("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted } }, h("span", { className: "tl-blocked", style: { width: 12, height: 12, borderRadius: 3, border: "2px solid #ef4444", flex: "0 0 auto" } }), "Blocked \u2014 waiting on an unfinished parent"),
+          h("span", { style: { fontSize: 11.5, color: muted } }, "dot = task status")),
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
         h("div", { ref: viewportRef, onMouseDown: onGraphDown, className: (panning ? "tl-panning" : (spaceHeld ? "tl-space" : "")), style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
