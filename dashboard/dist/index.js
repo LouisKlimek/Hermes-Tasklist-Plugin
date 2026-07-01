@@ -28,7 +28,7 @@
 
   var KAPI = "/api/plugins/kanban";
   var TLAPI = "/api/plugins/tasklist";
-  var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy";
+  var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy", LS_VIEW = "tasklist.view";
   var POLL_MS = 4000;
 
   var STATUS_ORDER = ["triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done", "archived"];
@@ -233,7 +233,22 @@
       st.textContent = ".tl-editable{border:1px solid transparent;border-radius:8px;transition:background .12s,border-color .12s;cursor:text}"
         + ".tl-editable:hover{background:var(--muted,rgba(255,255,255,.05));border-color:var(--border,#2a2a2a)}"
         + ".tl-penhint{opacity:0;transition:opacity .12s}"
-        + ".tl-editable:hover .tl-penhint{opacity:1}";
+        + ".tl-editable:hover .tl-penhint{opacity:1}"
+        + "@keyframes tl-node-in{from{opacity:0;transform:translateY(10px) scale(.94)}to{opacity:1;transform:none}}"
+        + "@keyframes tl-edge-draw{to{stroke-dashoffset:0}}"
+        + "@keyframes tl-flow{to{stroke-dashoffset:-28}}"
+        + "@keyframes tl-pulse{0%,100%{opacity:.45}50%{opacity:1}}"
+        + "@keyframes tl-fade-in{from{opacity:0}to{opacity:1}}"
+        + ".tl-gnode{transform-box:fill-box;transform-origin:center;transition:transform .16s cubic-bezier(.2,.7,.3,1)}"
+        + ".tl-gnode:hover{transform:translateY(-3px) scale(1.035)}"
+        + ".tl-gnode>rect,.tl-gnode>circle,.tl-gnode>text{transition:stroke .2s ease,fill .2s ease,opacity .2s ease,stroke-width .2s ease}"
+        + ".tl-gnode.in{animation:tl-node-in .44s cubic-bezier(.2,.7,.3,1) both}"
+        + ".tl-gedge{transition:stroke .2s ease,opacity .2s ease,stroke-width .2s ease}"
+        + ".tl-gedge.in{animation:tl-edge-draw .55s ease both}"
+        + ".tl-gedge.flow{animation:tl-flow .8s linear infinite}"
+        + ".tl-pulse{animation:tl-pulse 2.1s ease-in-out infinite}"
+        + ".tl-stage{animation:tl-fade-in .5s ease both}"
+        + "@media (prefers-reduced-motion: reduce){.tl-gnode.in,.tl-gedge.in,.tl-gedge.flow,.tl-pulse,.tl-stage{animation:none!important}.tl-gnode{transition:none}}";
       document.head.appendChild(st);
     } catch (e) {}
   })();
@@ -380,6 +395,11 @@
     s = useState(rd(LS_GROUPBY, "status")); var groupBy = s[0], setGroupBy = s[1];
     s = useState("created"); var sortBy = s[0], setSortBy = s[1];
     s = useState("desc"); var sortDir = s[0], setSortDir = s[1];
+    s = useState(rd(LS_VIEW, "list")); var view = s[0], setView = s[1];   // "list" | "graph"
+    s = useState(1); var graphZoom = s[0], setGraphZoom = s[1];
+    s = useState(null); var graphHover = s[0], setGraphHover = s[1];
+    s = useState(false); var graphAnim = s[0], setGraphAnim = s[1];   // brief entrance-animation window
+    useEffect(function () { if (view !== "graph") { setGraphAnim(false); return; } setGraphAnim(true); var to = setTimeout(function () { setGraphAnim(false); }, 1500); return function () { clearTimeout(to); }; }, [view]);
     s = useState(""); var search = s[0], setSearch = s[1];
     s = useState(""); var fAssignee = s[0], setFAssignee = s[1];
     s = useState(false); var showArchived = s[0], setShowArchived = s[1];
@@ -501,6 +521,7 @@
     var dragRef = useRef(null);
 
     useEffect(function () { try { localStorage.setItem(LS_GROUPBY, groupBy); } catch (e) {} }, [groupBy]);
+    useEffect(function () { try { localStorage.setItem(LS_VIEW, view); } catch (e) {} }, [view]);
     useEffect(function () { try { if (board) localStorage.setItem(LS_BOARD, board); } catch (e) {} }, [board]);
     useEffect(function () { try { localStorage.setItem(LS_SCOPE, JSON.stringify(scope)); } catch (e) {} }, [scope]);
 
@@ -1280,20 +1301,113 @@
 
     // ---- page ---------------------------------------------------------------
     var activeBoardLabel = (function () { var b = boards.filter(function (x) { return x.slug === board; })[0]; return b ? (b.label || b.name || b.slug) : board; })();
+    // ---- dependency graph (DAG) view ---------------------------------------
+    var graphModel = useMemo(function () {
+      if (view !== "graph") return null;
+      var list = scopeTasks.filter(function (t) { return showArchived || t.status !== "archived"; });
+      var idset = {}; list.forEach(function (t) { idset[t.id] = 1; });
+      var par = {}, chi = {}; list.forEach(function (t) { par[t.id] = []; chi[t.id] = []; });
+      list.forEach(function (t) { (edges.parents[t.id] || []).forEach(function (pid) { if (idset[pid] && par[t.id].indexOf(pid) === -1) { par[t.id].push(pid); chi[pid].push(t.id); } }); });
+      var level = {}, TEMP = {};
+      function lvl(id) { if (level[id] !== undefined) return level[id]; if (TEMP[id]) return 0; TEMP[id] = 1; var m = -1; par[id].forEach(function (p) { var l = lvl(p); if (l > m) m = l; }); TEMP[id] = 0; level[id] = m + 1; return level[id]; }
+      list.forEach(function (t) { lvl(t.id); });
+      var byLevel = {}, maxLevel = 0; list.forEach(function (t) { var L = level[t.id]; (byLevel[L] = byLevel[L] || []).push(t.id); if (L > maxLevel) L = maxLevel; if (level[t.id] > maxLevel) maxLevel = level[t.id]; });
+      function tcreated(id) { return (taskById[id] && taskById[id].created_at) || 0; }
+      Object.keys(byLevel).forEach(function (L) { byLevel[L].sort(function (a, b) { return tcreated(a) - tcreated(b); }); });
+      function idxMap() { var idx = {}; Object.keys(byLevel).forEach(function (L) { byLevel[L].forEach(function (id, i) { idx[id] = i; }); }); return idx; }
+      function bary(neigh, idx) { if (!neigh || !neigh.length) return 1e9; var s = 0, c = 0; neigh.forEach(function (n) { if (idx[n] !== undefined) { s += idx[n]; c++; } }); return c ? s / c : 1e9; }
+      for (var pass = 0; pass < 4; pass++) {
+        var idx = idxMap();
+        for (var L = 1; L <= maxLevel; L++) { var a1 = byLevel[L]; if (a1 && a1.length) a1.sort(function (a, b) { var d = bary(par[a], idx) - bary(par[b], idx); return d !== 0 ? d : tcreated(a) - tcreated(b); }); idx = idxMap(); }
+        for (var L2 = maxLevel - 1; L2 >= 0; L2--) { var a2 = byLevel[L2]; if (a2 && a2.length) a2.sort(function (a, b) { var d = bary(chi[a], idx) - bary(chi[b], idx); return d !== 0 ? d : tcreated(a) - tcreated(b); }); idx = idxMap(); }
+      }
+      var NODE_W = 212, NODE_H = 58, HGAP = 88, VGAP = 22, PADX = 26, PADT = 46, PADB = 26;
+      var maxRows = 0; for (var L3 = 0; L3 <= maxLevel; L3++) { var ar = byLevel[L3] || []; if (ar.length > maxRows) maxRows = ar.length; }
+      var totalH = maxRows * (NODE_H + VGAP) - VGAP; if (totalH < 0) totalH = 0;
+      var pos = {}, ord = {}, oc = 0;
+      for (var L4 = 0; L4 <= maxLevel; L4++) { var arr = byLevel[L4] || []; var colH = arr.length * (NODE_H + VGAP) - VGAP; var offY = PADT + (totalH - colH) / 2; arr.forEach(function (id, i) { pos[id] = { x: PADX + L4 * (NODE_W + HGAP), y: offY + i * (NODE_H + VGAP) }; ord[id] = oc++; }); }
+      var W = PADX * 2 + (maxLevel + 1) * (NODE_W + HGAP) - HGAP; if (W < PADX * 2 + NODE_W) W = PADX * 2 + NODE_W;
+      var H = PADT + PADB + totalH; if (H < PADT + PADB + NODE_H) H = PADT + PADB + NODE_H;
+      var elist = []; list.forEach(function (t) { chi[t.id].forEach(function (cid) { elist.push({ from: t.id, to: cid }); }); });
+      return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
+    }, [view, scopeTasks, edges, showArchived, taskById]);
+
+    function graphView() {
+      var gm = graphModel;
+      if (!gm || !gm.ids.length) return h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : "No tasks to graph in this scope.");
+      var par = gm.par, chi = gm.chi, pos = gm.pos;
+      function reach(start, adj) { var out = {}, st = (adj[start] || []).slice(); while (st.length) { var x = st.pop(); if (out[x]) continue; out[x] = 1; (adj[x] || []).forEach(function (n) { st.push(n); }); } return out; }
+      var hi = null;
+      if (graphHover && pos[graphHover]) { var anc = reach(graphHover, par), des = reach(graphHover, chi); hi = {}; hi[graphHover] = 1; Object.keys(anc).forEach(function (k) { hi[k] = 1; }); Object.keys(des).forEach(function (k) { hi[k] = 1; }); }
+      function nodeState(id) { var t = taskById[id]; if (!t) return "ready"; if (t.status === "done") return "done"; var ps = par[id]; if (!ps || !ps.length) return "ready"; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return "blocked"; } return "ready"; }
+      var stateColor = { done: "#34d399", ready: accent, blocked: "#f87171" };
+      var stateLabel = { done: "Done", ready: "Ready", blocked: "Blocked" };
+      var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = "var(--foreground, #e5e7eb)";
+      var maxChars = Math.max(6, Math.floor((NODE_W - 52) / 6.7));
+      // edges
+      var edgeEls = gm.edges.map(function (e, i) {
+        var a = pos[e.from], b = pos[e.to]; if (!a || !b) return null;
+        var x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2, dx = Math.max(34, (x2 - x1) / 2);
+        var on = hi ? (hi[e.from] && hi[e.to]) : true;
+        var col = on ? (hi ? accent : "var(--muted-foreground, #9ca3af)") : "var(--muted-foreground, #9ca3af)";
+        var cls = "tl-gedge" + (graphAnim ? " in" : ((!graphAnim && hi && on) ? " flow" : ""));
+        var style = {};
+        if (graphAnim) { var len = Math.hypot(x2 - x1, y2 - y1) + Math.abs(y2 - y1) * 0.4 + 30; style.strokeDasharray = len; style.strokeDashoffset = len; style.animationDelay = (gm.ord[e.to] * 22 + 150) + "ms"; }
+        else if (hi && on) { style.strokeDasharray = "6 8"; }
+        return h("path", { key: "e" + i, className: cls, d: "M" + x1 + "," + y1 + " C" + (x1 + dx) + "," + y1 + " " + (x2 - dx) + "," + y2 + " " + x2 + "," + y2, fill: "none", stroke: col, strokeWidth: hi && on ? 2 : 1.3, opacity: hi ? (on ? 0.95 : 0.12) : 0.5, markerEnd: hi && on ? "url(#tl-arrow-hi)" : "url(#tl-arrow)", style: style });
+      });
+      // stage headers
+      var stageEls = []; for (var L = 0; L <= gm.maxLevel; L++) { var cx = 26 + L * (NODE_W + 88) + NODE_W / 2; stageEls.push(h("text", { key: "st" + L, className: graphAnim ? "tl-stage" : null, x: cx, y: 20, textAnchor: "middle", fill: muted, fontSize: 11, fontWeight: 600, style: graphAnim ? { letterSpacing: ".04em", animationDelay: (L * 55) + "ms" } : { letterSpacing: ".04em" } }, "Stage " + (L + 1))); }
+      // nodes
+      var nodeEls = gm.ids.map(function (id) {
+        var t = taskById[id]; if (!t) return null; var p = pos[id]; var st = nodeState(id); var sc = stateColor[st];
+        var dim = hi && !hi[id]; var hov = graphHover === id;
+        var dm = statusMeta(t.status); var title = String(t.title || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "\u2026";
+        var np = (par[id] || []).length, nc = (chi[id] || []).length;
+        var sub = stateLabel[st] + (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
+        var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
+        return h("g", { key: id, transform: "translate(" + p.x + "," + p.y + ")" },
+          h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { setModalId(id); }, onMouseEnter: function () { setGraphHover(id); }, onMouseLeave: function () { setGraphHover(null); } },
+            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: hov ? accent : sc, strokeWidth: hov ? 2.4 : 1.6 }),
+            h("rect", { x: 0, y: 0, width: 5, height: NODE_H, rx: 2.5, ry: 2.5, fill: dm.dot }),
+            h("circle", { className: (st === "ready" && !dim) ? "tl-pulse" : null, cx: 22, cy: NODE_H / 2 - 8, r: 4.5, fill: sc }),
+            h("text", { x: 34, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
+            h("text", { x: 34, y: NODE_H / 2 + 14, fill: muted, fontSize: 10.5 }, sub)));
+      });
+      var svg = h("svg", { width: gm.W * graphZoom, height: gm.H * graphZoom, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
+        h("defs", null,
+          h("marker", { id: "tl-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, h("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--muted-foreground, #9ca3af)" })),
+          h("marker", { id: "tl-arrow-hi", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7.5, markerHeight: 7.5, orient: "auto-start-reverse" }, h("path", { d: "M0,0 L10,5 L0,10 z", fill: accent }))),
+        h("g", null, edgeEls), h("g", null, stageEls), h("g", null, nodeEls));
+      function zBtn(lbl, fn, title) { return h("button", { onClick: fn, title: title, style: { background: bgMuted, color: "inherit", border: "1px solid " + borderC, borderRadius: 7, width: 30, height: 28, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" } }, lbl); }
+      function legendDot(c, lbl) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: muted } }, h("span", { style: { width: 9, height: 9, borderRadius: 3, background: "transparent", border: "2px solid " + c } }), lbl); }
+      var controls = h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { setGraphZoom(function (z) { return Math.max(0.4, Math.round((z - 0.1) * 10) / 10); }); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { setGraphZoom(function (z) { return Math.min(2, Math.round((z + 0.1) * 10) / 10); }); }, "Zoom in"), zBtn("\u21ba", function () { setGraphZoom(1); }, "Reset zoom")),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } }, legendDot(stateColor.ready, "Ready"), legendDot(stateColor.blocked, "Blocked (waiting on a parent)"), legendDot(stateColor.done, "Done")),
+        h("span", { style: { fontSize: 11.5, color: muted } }, "Left \u2192 right = dependency order \u00b7 click a task to open \u00b7 hover to trace its chain"));
+      return h("div", null, controls,
+        h("div", { style: { border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, overflow: "auto", maxHeight: "calc(100vh - 250px)", padding: 6 } }, svg));
+    }
+
     var main = h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
       h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
           isNarrow ? h("button", { onClick: function () { setSidebarOpen(!sidebarOpen); }, title: "Show/hide boards", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 7, padding: "5px 10px", fontSize: 12, cursor: "pointer", flex: "0 0 auto" } }, "\u2630 Boards") : null,
           h("h1", { style: { fontSize: isNarrow ? 16 : 18, fontWeight: 700, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, scopeTitle, activeBoardLabel ? h("span", { style: { fontSize: 12, fontWeight: 400, color: muted, marginLeft: 8 } }, "in " + activeBoardLabel) : null)),
         h("div", { style: { display: "flex", alignItems: "center", gap: 12, flex: "0 0 auto" } },
+          h("div", { style: { display: "inline-flex", border: "1px solid " + borderC, borderRadius: 8, overflow: "hidden" } },
+            ["list", "graph"].map(function (v) { var on = view === v; return h("button", { key: v, onClick: function () { setView(v); }, title: v === "graph" ? "Dependency graph" : "List view", style: { background: on ? accent : "transparent", color: on ? "#fff" : "inherit", border: "none", padding: "6px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, v === "list" ? "List" : "Graph"); })),
           h("span", { style: { fontSize: 12, color: muted } }, loading ? "Loading\u2026" : (scopeTasks.length + " task" + (scopeTasks.length === 1 ? "" : "s"))),
           h("button", { onClick: openCreate, title: "Create a new task", style: { display: "inline-flex", alignItems: "center", gap: 6, background: accent, color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", flex: "0 0 auto" } }, h("span", { style: { fontSize: 15, lineHeight: 1, marginTop: -1 } }, "+"), "New task"))
       ),
-      toolbar,
       notice ? h("div", { style: { fontSize: 12, color: "#fbbf24", border: "1px solid " + borderC, borderRadius: 6, padding: "8px 12px", marginBottom: 10 } }, notice) : null,
       error ? h("div", { style: { fontSize: 13, color: "#f87171", border: "1px solid " + borderC, borderRadius: 8, padding: "16px" } }, "Error: " + error) : null,
-      (!error && !loading && !sections.length) ? h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "24px", textAlign: "center" } }, scope.type === "list" ? "This list is empty. Drag tasks onto it, use the List dropdown on a task, or add one below." : "No tasks here.") : null,
-      sections.map(function (sec) { return sectionBlock(sec); })
+      view === "graph"
+        ? graphView()
+        : h(React.Fragment, null,
+          toolbar,
+          (!error && !loading && !sections.length) ? h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "24px", textAlign: "center" } }, scope.type === "list" ? "This list is empty. Drag tasks onto it, use the List dropdown on a task, or add one below." : "No tasks here.") : null,
+          sections.map(function (sec) { return sectionBlock(sec); }))
     );
 
     useEffect(function () {

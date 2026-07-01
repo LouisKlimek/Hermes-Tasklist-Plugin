@@ -14,6 +14,27 @@ It's a pure dashboard UI plugin: it reads and writes the same `~/.hermes/kanban.
 
 ---
 
+## List & Dependency-graph views
+
+A **List / Graph** switch in the header toggles between the normal list and a
+**dependency-graph view** of parent/child links (persisted per browser).
+
+Because a child can have **multiple parents** — and tasks have no start/end dates —
+a classic time-axis Gantt doesn't fit. Instead the graph is a layered DAG: the
+horizontal axis is *dependency order* (a child is placed strictly to the right of
+all its parents), so it reads Gantt-like left → right as "this can only start once
+its parents are done", while multiple incoming edges are shown cleanly. Each stage
+column is labelled (Stage 1, 2, 3 …).
+
+Nodes are colour-coded: **Ready** (all parents done / no parents), **Blocked**
+(waiting on at least one unfinished parent), **Done**. A left stripe shows the raw
+status. Click a node to open that task; hover to trace its full ancestor/descendant
+chain (others dim). Zoom controls and scroll/pan handle large graphs. Entering the graph plays a
+staggered entrance (nodes fade/scale in left → right, edges draw themselves in),
+hovering flows animated dashes along the highlighted chain, ready nodes pulse
+gently, and nodes lift on hover — all respecting `prefers-reduced-motion`. Cycles (which
+shouldn't occur in a real dependency graph) are handled defensively without hanging.
+
 ## Features
 
 - **Grouped list view** — inside any list, group tasks by **Status** (default, the kanban columns), **Assignee**, **Priority**, or nothing. Collapsible sections with task counts.
