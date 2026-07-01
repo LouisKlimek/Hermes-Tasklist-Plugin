@@ -818,7 +818,7 @@
       var kids = hasKids(t);
       var expanded = !!expandedTasks[t.id];
       var disc = kids
-        ? h("span", { onClick: function (e) { e.stopPropagation(); var willOpen = !expandedTasks[t.id]; setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); if (willOpen) ensureChildEdges(t.id); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", color: muted, cursor: "pointer", flex: "0 0 auto" } }, Caret(expanded, 12))
+        ? h("span", { onClick: function (e) { e.stopPropagation(); var willOpen = !expandedTasks[t.id]; setExpandedTasks(function (n) { var x = Object.assign({}, n); x[t.id] = !x[t.id]; return x; }); if (willOpen) ensureChildEdges(t.id); }, title: expanded ? "Collapse subtasks" : "Expand subtasks", style: { display: "inline-flex", alignItems: "center", justifyContent: "center", color: muted, cursor: "pointer", flex: "0 0 auto", boxSizing: "content-box", padding: 9, margin: -9 } }, Caret(expanded, 12))
         : h("span", { style: { display: "inline-block", width: 12, flex: "0 0 auto" } });
       if (isCompact) {
         return h("div", {
