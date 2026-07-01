@@ -39,7 +39,7 @@ column is labelled (Stage 1, 2, 3 …).
 Each node is a calm neutral card with a **status dot** in the live Kanban colour;
 its dependency **readiness** (Ready / Blocked / Done) is shown as a coloured text
 label rather than a heavy border, so status and readiness never clash. Click a node to open that task; hover to trace its full ancestor/descendant
-chain (others dim). Navigate like an image editor: **scroll or pinch to zoom toward the cursor**, and **drag to pan** around the canvas; +/- buttons and a reset are also there. Large graphs stay smooth because the SVG is memoised — panning and zooming only transform the viewport, they don't redraw the nodes. Entering the graph plays a
+chain (others dim). Navigate like an image editor: **scroll or pinch to zoom toward the cursor**, and **drag to pan** around the canvas; +/- buttons, a **Fit to screen** button (⛶) and a reset are also there, and the graph auto-frames itself when you open the view. Hold **Space** to pan from anywhere (Photoshop-style), which also suppresses task-opening clicks while held. Large graphs stay smooth because the SVG is memoised — panning and zooming only transform the viewport, they don't redraw the nodes. Entering the graph plays a
 staggered entrance (nodes fade/scale in left → right, edges draw themselves in),
 hovering flows animated dashes along the highlighted chain, ready nodes pulse
 gently, and nodes lift on hover — all respecting `prefers-reduced-motion`. Cycles (which
