@@ -69,6 +69,13 @@ def _conn() -> sqlite3.Connection:
         "  updated_at INTEGER NOT NULL,"
         "  PRIMARY KEY (board, task_id))"
     )
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS path_cache ("
+        "  cand TEXT PRIMARY KEY,"          # the path string as written in text
+        "  state TEXT NOT NULL,"            # 'valid' | 'invalid'
+        "  resolved TEXT,"                  # real relative path when resolved
+        "  updated_at INTEGER NOT NULL)"
+    )
     return c
 
 
@@ -265,5 +272,86 @@ def set_membership(body: MembershipBody, board: Optional[str] = Query(None)):
             )
         c.commit()
         return {"ok": True}
+    finally:
+        c.close()
+
+
+# --------------------------------------------------------------------------- #
+# path-resolution cache  (mounted at /api/plugins/tasklist/pathcache)
+#
+# Persists the file-viewer's "does this slash-path point at a real file/folder,
+# and if so what's its resolved path" decisions server-side, so an expensive
+# tree search runs at most once across ALL browsers/reloads instead of on every
+# page load. Entirely self-contained: this plugin never reads another plugin's
+# store, and works whether or not the File Explorer plugin is installed.
+# --------------------------------------------------------------------------- #
+_PC_TTL_VALID = 7 * 24 * 3600     # keep positive resolutions for 7 days
+_PC_TTL_INVALID = 3600            # re-check "not found" after 1 hour
+_PC_MAX_ROWS = 5000               # prune oldest beyond this
+
+
+class PathCachePut(BaseModel):
+    cand: str
+    state: str                    # 'valid' | 'invalid'
+    resolved: Optional[str] = None
+
+
+@router.get("/pathcache")
+def get_path_cache():
+    """Return all still-fresh cache entries as {cand: {state, resolved}}."""
+    now = int(time.time())
+    c = _conn()
+    try:
+        # drop expired rows (best-effort housekeeping)
+        c.execute(
+            "DELETE FROM path_cache WHERE (state='valid' AND updated_at < ?) "
+            "OR (state<>'valid' AND updated_at < ?)",
+            (now - _PC_TTL_VALID, now - _PC_TTL_INVALID),
+        )
+        c.commit()
+        rows = c.execute("SELECT cand, state, resolved FROM path_cache").fetchall()
+        entries = {r["cand"]: {"state": r["state"], "resolved": r["resolved"]} for r in rows}
+        return {"entries": entries}
+    finally:
+        c.close()
+
+
+@router.put("/pathcache")
+def put_path_cache(body: PathCachePut):
+    """Upsert one decision. state must be 'valid' or 'invalid'."""
+    if not body.cand or body.state not in ("valid", "invalid"):
+        raise HTTPException(status_code=400, detail="cand + state('valid'|'invalid') required")
+    now = int(time.time())
+    c = _conn()
+    try:
+        c.execute(
+            "INSERT INTO path_cache (cand, state, resolved, updated_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(cand) DO UPDATE SET state=excluded.state, "
+            "  resolved=excluded.resolved, updated_at=excluded.updated_at",
+            (body.cand, body.state, body.resolved, now),
+        )
+        # prune oldest beyond the cap
+        n = c.execute("SELECT COUNT(*) AS n FROM path_cache").fetchone()["n"]
+        if n > _PC_MAX_ROWS:
+            c.execute(
+                "DELETE FROM path_cache WHERE cand IN ("
+                "  SELECT cand FROM path_cache ORDER BY updated_at ASC LIMIT ?)",
+                (n - _PC_MAX_ROWS,),
+            )
+        c.commit()
+        return {"ok": True}
+    finally:
+        c.close()
+
+
+@router.delete("/pathcache")
+def clear_path_cache():
+    """Clear the whole cache (e.g. to force a re-check after creating files)."""
+    c = _conn()
+    try:
+        n = c.execute("SELECT COUNT(*) AS n FROM path_cache").fetchone()["n"]
+        c.execute("DELETE FROM path_cache")
+        c.commit()
+        return {"ok": True, "cleared": n}
     finally:
         c.close()

@@ -55,6 +55,25 @@
   function fmtBytes(n) { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
   function isFilePath(p) { return /\.[A-Za-z0-9]{1,8}$/.test(String(p).split("/").pop()); }
+
+  // ── persistent path-resolution cache (survives page reloads) ──
+  var FX_LSKEY = "hermesPathCacheV1";
+  function fxLoadCache() {
+    try {
+      var raw = window.localStorage.getItem(FX_LSKEY); if (!raw) return {};
+      var o = JSON.parse(raw) || {}, now = Date.now(), out = {};
+      Object.keys(o).forEach(function (k) { var v = o[k]; if (!v) return; var ttl = v.state === "valid" ? 604800000 : 3600000; if (now - (v.t || 0) < ttl) out[k] = { state: v.state, resolved: v.resolved }; });
+      return out;
+    } catch (e) { return {}; }
+  }
+  function fxSaveCache(cand, rec) {
+    try {
+      var raw = window.localStorage.getItem(FX_LSKEY); var o = raw ? (JSON.parse(raw) || {}) : {};
+      o[cand] = { state: rec.state, resolved: rec.resolved, t: Date.now() };
+      var keys = Object.keys(o); if (keys.length > 3000) { keys.sort(function (a, b) { return (o[a].t || 0) - (o[b].t || 0); }); keys.slice(0, keys.length - 3000).forEach(function (k) { delete o[k]; }); }
+      window.localStorage.setItem(FX_LSKEY, JSON.stringify(o));
+    } catch (e) {}
+  }
   function linkifyPaths(text, onOpen) {
     if (text == null || text === "") return text;
     var s = String(text);
@@ -160,6 +179,9 @@
 
   function getJSON(p) { return SDK.fetchJSON(p); }
   function send(method, p, body) { return SDK.fetchJSON(p, { method: method, headers: { "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) }); }
+  // Server-side path-resolution cache (this plugin's own backend, /api/plugins/tasklist/pathcache).
+  function pcRemoteGet() { return getJSON(TLAPI + "/pathcache"); }
+  function pcRemotePut(cand, rec) { return send("PUT", TLAPI + "/pathcache", { cand: cand, state: rec.state, resolved: rec.resolved || null }); }
   // Raw authenticated fetch for multipart upload + binary download, where
   // fetchJSON's JSON assumptions don't fit. Mirrors the dashboard's own auth:
   // loopback injects window.__HERMES_SESSION_TOKEN__ (sent as a header); the
@@ -394,7 +416,20 @@
     var explorerTabRef = useRef("/file-explorer"); explorerTabRef.current = explorerTab;
     var resolveCacheRef = useRef({});
     var folderCacheRef = useRef({});
-    var pathValidRef = useRef({});
+    var pathValidRef = useRef(null); if (pathValidRef.current === null) pathValidRef.current = {};
+    var cacheReadyRef = useRef(false);   // true once the server cache (or LS fallback) has been loaded
+    var backendRef = useRef(true);       // false if the backend cache endpoint is unreachable -> LS fallback
+    useEffect(function () {
+      pcRemoteGet().then(function (r) {
+        var e = (r && r.entries) || {};
+        Object.keys(e).forEach(function (k) { if (!(k in pathValidRef.current)) pathValidRef.current[k] = { state: e[k].state, resolved: e[k].resolved }; });
+        cacheReadyRef.current = true; setPathV(function (v) { return v + 1; });
+      }).catch(function () {
+        backendRef.current = false;
+        var ls = fxLoadCache(); Object.keys(ls).forEach(function (k) { if (!(k in pathValidRef.current)) pathValidRef.current[k] = ls[k]; });
+        cacheReadyRef.current = true; setPathV(function (v) { return v + 1; });
+      });
+    }, []);
     var searchChainRef = useRef(Promise.resolve());
     s = useState(0); var pathV = s[0], setPathV = s[1];
     var dragRef = useRef(null);
@@ -590,6 +625,7 @@
       var relDirSet = {}; segs.slice(0, -1).forEach(function (s) { relDirSet[s] = 1; }); // target's directory segments
       var SKIP = { "node_modules": 1, ".git": 1, "__pycache__": 1, "site-packages": 1, ".venv": 1, "venv": 1, ".cache": 1, ".npm": 1, ".mypy_cache": 1, "dist": 1, ".next": 1, "build": 1 };
       var rootPath = null, listings = 0, MAX = 600, MAX_DEPTH = 14;
+      var lastDir = segs.length >= 2 ? segs[segs.length - 2] : null;
       var pq = [], nq = [], seen = { "": 1 }; nq.push({ d: "", depth: 0 });
       var basenameHits = [], directTried = {};
       function relOf(e) { if (rootPath && e.path && e.path.indexOf(rootPath) === 0) return e.path.slice(rootPath.length).replace(/^\/+/, ""); return e.name; }
@@ -598,7 +634,7 @@
       function loop() {
         if ((!pq.length && !nq.length) || listings >= MAX) return Promise.resolve(null);
         var wave = [];
-        while ((pq.length || nq.length) && wave.length < 8 && listings < MAX) { wave.push(pq.length ? pq.shift() : nq.shift()); listings++; }
+        while ((pq.length || nq.length) && wave.length < 24 && listings < MAX) { wave.push(pq.length ? pq.shift() : nq.shift()); listings++; }
         return Promise.all(wave.map(function (item) {
           return listDir(item.d).then(function (r) {
             if (!r) return null;
@@ -609,9 +645,10 @@
               if (e.is_directory) {
                 if (firstDir && e.name === firstDir) cands.push(restAfterFirst ? (rr + "/" + restAfterFirst) : rr); // spotted the target's first dir -> read full candidate directly
                 if (item.depth < MAX_DEPTH && !SKIP[e.name]) enqueue(rr, item.depth + 1);
-              } else {
-                if (rr === rel || (rr.length > rel.length && rr.slice(-(rel.length + 1)) === "/" + rel)) found = rr;
-                else if (e.name === base) basenameHits.push(rr);
+              } else if (e.name === base) {
+                if (rr === rel || (rr.length > rel.length && rr.slice(-(rel.length + 1)) === "/" + rel)) found = rr;                          // full relative-path suffix match
+                else if (lastDir) { var tail = lastDir + "/" + base; if (rr === tail || (rr.length > tail.length && rr.slice(-(tail.length + 1)) === "/" + tail)) found = rr; else basenameHits.push(rr); } // strong: parent-dir + name match
+                else basenameHits.push(rr);
               }
             });
             if (found) return found;
@@ -673,7 +710,7 @@
       function tryDirect(c) { if (directTried[c]) return Promise.resolve(null); directTried[c] = 1; return listDir(c).then(function () { return c; }).catch(function () { return null; }); }
       function loop() {
         if ((!pq.length && !nq.length) || listings >= MAX) return Promise.resolve(null);
-        var wave = []; while ((pq.length || nq.length) && wave.length < 8 && listings < MAX) { wave.push(pq.length ? pq.shift() : nq.shift()); listings++; }
+        var wave = []; while ((pq.length || nq.length) && wave.length < 24 && listings < MAX) { wave.push(pq.length ? pq.shift() : nq.shift()); listings++; }
         return Promise.all(wave.map(function (item) {
           return listDir(item.d).catch(function () { return null; }).then(function (r) {
             if (!r) return null; if (rootPath == null && r.root) rootPath = r.root;
@@ -715,7 +752,7 @@
       var fn = function (p) { var t = fn.resolvedOf(p); if (installed) { try { window.open(explorerHref(t), "_blank", "noopener"); } catch (e) { window.location.href = explorerHref(t); } } else if (isFilePath(t)) { if (navMode) navFilePreview(t); else openFilePreview(t); } };
       fn.folders = installed;
       fn.known = function (cand) { var e = pathValidRef.current[cand]; return e ? e.state : undefined; };
-      fn.ensure = function (cand, isF) { if (pathValidRef.current[cand]) return; pathValidRef.current[cand] = { state: "pending" }; validatePath(cand, isF).then(function (res) { pathValidRef.current[cand] = res.valid ? { state: "valid", resolved: res.resolved } : { state: "invalid" }; setPathV(function (v) { return v + 1; }); }).catch(function () { pathValidRef.current[cand] = { state: "invalid" }; setPathV(function (v) { return v + 1; }); }); };
+      fn.ensure = function (cand, isF) { if (!cacheReadyRef.current) return; if (pathValidRef.current[cand]) return; pathValidRef.current[cand] = { state: "pending" }; validatePath(cand, isF).then(function (res) { var rec = res.valid ? { state: "valid", resolved: res.resolved } : { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); setPathV(function (v) { return v + 1; }); }).catch(function () { var rec = { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); setPathV(function (v) { return v + 1; }); }); };
       fn.resolvedOf = function (cand) { var e = pathValidRef.current[cand]; return (e && e.resolved) || cand; };
       fn.hrefFor = function (p) { var t = fn.resolvedOf(p); return installed ? explorerHref(t) : (isFilePath(t) ? filesDownloadHref(t) : "#"); };
       return fn;
