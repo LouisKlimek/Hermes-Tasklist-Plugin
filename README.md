@@ -251,3 +251,17 @@ Issues and pull requests are welcome. Please include your Hermes Agent version (
 ---
 
 <sub>Keywords: Hermes Agent dashboard plugin · multi‑agent kanban board · ClickUp‑style list view · agent task management UI · Nous Research Hermes · kanban list view plugin · self‑hosted AI agent orchestration.</sub>
+
+## File Explorer integration
+
+Clickable file paths in task descriptions, results, run summaries and comments
+open in a built-in mini viewer (Markdown/image/text, with in-file path
+navigation and a Back button).
+
+If the companion
+[Better Hermes File Explorer](https://github.com/LouisKlimek/Better-Hermes-File-Explorer)
+plugin is installed, the tasklist **detects it automatically** and instead
+deep-links paths straight into the Explorer — files via `…/files?file=<path>`
+and **folders** via `…/files?path=<dir>` (folder paths only become clickable
+when the Explorer is present). No configuration needed; without the Explorer the
+built-in viewer is used.

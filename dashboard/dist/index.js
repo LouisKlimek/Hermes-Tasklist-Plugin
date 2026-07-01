@@ -54,6 +54,7 @@
   function fmtPayload(p) { if (p == null || p === "") return ""; var str; try { str = typeof p === "string" ? p : JSON.stringify(p); } catch (e) { str = String(p); } return str; }
   function fmtBytes(n) { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
+  function isFilePath(p) { return /\.[A-Za-z0-9]{1,8}$/.test(String(p).split("/").pop()); }
   function linkifyPaths(text, onOpen) {
     if (text == null || text === "") return text;
     var s = String(text);
@@ -74,7 +75,7 @@
   function mdInline(s, onOpen) {
     var out = [], rest = String(s == null ? "" : s), key = 0;
     var pats = [
-      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp)) { return h("a", { key: "cl" + (key++), href: filesDownloadHref(pp), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }) }, inner); } return h("code", { key: "c" + (key++), style: mdCodeStyle() }, inner); } },
+      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp)) { return h("a", { key: "cl" + (key++), href: (onOpen.hrefFor ? onOpen.hrefFor(pp) : filesDownloadHref(pp)), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }) }, inner); } return h("code", { key: "c" + (key++), style: mdCodeStyle() }, inner); } },
       { re: /((?:https?:\/\/|www\.)[^\s<>()\[\]]+)/, mk: function (m) { var raw = m[1].replace(/[.,;:!?]+$/, ""); var href = /^www\./i.test(raw) ? ("https://" + raw) : raw; return h("a", { key: "u" + (key++), href: href, target: "_blank", rel: "noopener noreferrer", onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all" } }, raw); } },
       { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
@@ -82,7 +83,8 @@
       { re: /~~([^~]+)~~/, mk: function (m) { return h("del", { key: "s" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /\[([^\]]+)\]\(([^)\s]+)\)/, mk: function (m) { return h("a", { key: "l" + (key++), href: m[2], target: "_blank", rel: "noopener noreferrer", onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline" } }, m[1]); } }
     ];
-    if (onOpen) pats.push({ re: /((?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8})/, mk: function (m) { var pp = m[1]; return h("a", { key: "fp" + (key++), href: filesDownloadHref(pp), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" } }, pp); } });
+    if (onOpen) pats.push({ re: /((?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8})/, mk: function (m) { var pp = m[1]; return h("a", { key: "fp" + (key++), href: (onOpen.hrefFor ? onOpen.hrefFor(pp) : filesDownloadHref(pp)), target: "_blank", rel: "noopener noreferrer", title: "Open " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" } }, pp); } });
+    if (onOpen && onOpen.folders) pats.push({ re: /((?:[\w.\-]+\/){2,}[\w.\-]+)(?![\w.\-]*\.[A-Za-z0-9])/, mk: function (m) { var pp = m[1].replace(/\/+$/, ""); return h("a", { key: "dp" + (key++), href: (onOpen.hrefFor ? onOpen.hrefFor(pp) : "#"), target: "_blank", rel: "noopener noreferrer", title: "Open folder " + pp, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(pp); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" } }, m[1]); } });
     var guard = 0;
     while (rest && guard++ < 5000) {
       var best = null;
@@ -345,6 +347,8 @@
     s = useState(null); var filePreview = s[0], setFilePreview = s[1];
     s = useState(false); var previewRaw = s[0], setPreviewRaw = s[1];
     s = useState([]); var filePreviewStack = s[0], setFilePreviewStack = s[1];
+    s = useState(false); var explorerInstalled = s[0], setExplorerInstalled = s[1];
+    s = useState("/file-explorer"); var explorerTab = s[0], setExplorerTab = s[1];
     s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
     s = useState(null); var draft = s[0], setDraft = s[1];
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
@@ -384,6 +388,8 @@
     var boardRef = useRef(board); boardRef.current = board;
     var filePreviewRef = useRef(null); filePreviewRef.current = filePreview;
     var filePreviewStackRef = useRef([]); filePreviewStackRef.current = filePreviewStack;
+    var explorerRef = useRef(false); explorerRef.current = explorerInstalled;
+    var explorerTabRef = useRef("/file-explorer"); explorerTabRef.current = explorerTab;
     var resolveCacheRef = useRef({});
     var dragRef = useRef(null);
 
@@ -639,6 +645,21 @@
     function navFilePreview(path) { var cur = filePreviewRef.current; if (cur) setFilePreviewStack(function (st) { return st.concat([cur]); }); loadFilePreview(path); }
     function backFilePreview() { var st = filePreviewStackRef.current || []; if (!st.length) { setFilePreview(null); return; } var prev = st[st.length - 1]; setFilePreviewStack(st.slice(0, -1)); setPreviewRaw(false); setFilePreview(prev); }
     function closeFilePreview() { setFilePreview(null); setFilePreviewStack([]); }
+    useEffect(function () {
+      getJSON("/api/dashboard/plugins").then(function (list) {
+        if (!Array.isArray(list)) return;
+        var ex = list.filter(function (p) { return p && (p.name === "fileexplorer" || p.label === "Better Hermes File Explorer"); })[0];
+        if (ex) { setExplorerInstalled(true); if (ex.tab && ex.tab.path) setExplorerTab(ex.tab.path); }
+      }).catch(function () {});
+    }, []); // eslint-disable-line
+    function explorerHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + (explorerTabRef.current || "/file-explorer") + (isFilePath(clean) ? "?file=" : "?path=") + encodeURIComponent(clean); }
+    function makePathHandler(navMode) {
+      var installed = explorerRef.current;
+      var fn = function (p) { if (installed) { try { window.open(explorerHref(p), "_blank", "noopener"); } catch (e) { window.location.href = explorerHref(p); } } else if (navMode) navFilePreview(p); else openFilePreview(p); };
+      fn.folders = installed;
+      fn.hrefFor = function (p) { return installed ? explorerHref(p) : (isFilePath(p) ? filesDownloadHref(p) : "#"); };
+      return fn;
+    }
     function archiveTask(id, toStatus) {
       if (!id) return;
       setNotice(null);
@@ -956,7 +977,7 @@
               h("button", { onClick: function () { setDescEdit(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 7, padding: "7px 16px", fontSize: 12.5, cursor: "pointer" } }, "Cancel")))
         : h("div", { className: "tl-editable", onClick: function () { setDescDraft(task.body || ""); setDescEdit(true); }, title: "Click to edit", style: { position: "relative", padding: "12px 14px", minHeight: 46 } },
             task.body
-              ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(task.body, openFilePreview))
+              ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(task.body, makePathHandler(false)))
               : h("span", { style: { fontSize: 13.5, color: muted, fontStyle: "italic" } }, "Add a description\u2026"),
             h("span", { className: "tl-penhint", style: { position: "absolute", top: 9, right: 11, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: muted, pointerEvents: "none" } }, PencilIcon(12), "Edit"));
       L.push(h("div", { key: "desc" }, section("Description", null, descBody, { first: true })));
@@ -978,7 +999,7 @@
       L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
-      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { fontSize: 13, lineHeight: 1.6, wordBreak: "break-word" } }, mdBlocks(task.result, openFilePreview)))));
+      if (task.result) L.push(h("div", { key: "res" }, section("Result", null, h("div", { style: { fontSize: 13, lineHeight: 1.6, wordBreak: "break-word" } }, mdBlocks(task.result, makePathHandler(false))))));
 
       // ---- Attachments -------------------------------------------------------
       var atts = (d && d.attachments) || [];
@@ -1029,7 +1050,7 @@
               r.profile ? h("span", { style: { color: muted } }, "@" + r.profile) : null,
               dur ? h("span", { style: { color: muted, fontSize: 11 } }, dur) : null,
               h("span", { style: { color: muted, fontSize: 11, marginLeft: "auto" } }, ago(r.ended_at || r.started_at, now) + " ago")),
-            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, mdBlocks(r.summary, openFilePreview)) : null,
+            r.summary ? h("div", { style: { marginTop: 4, lineHeight: 1.5 } }, mdBlocks(r.summary, makePathHandler(false))) : null,
             r.error ? h("div", { style: { marginTop: 4, color: "#f87171", fontSize: 12.5 } }, r.error) : null);
         }));
         R.push(h("div", { key: "runs" }, section("Run history (" + runs.length + ")", null, runBody, { first: R.length === 0 })));
@@ -1041,7 +1062,7 @@
               h("div", { style: { width: 26, height: 26, borderRadius: "50%", background: bgMuted, border: "1px solid " + borderC, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "0 0 auto", textTransform: "uppercase" } }, (c.author || c.created_by || "?").slice(0, 2)),
               h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
                 h("div", { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 3 } }, h("span", { style: { fontSize: 12.5, fontWeight: 600 } }, c.author || c.created_by || "?"), h("span", { style: { color: muted, fontSize: 11 } }, ago(c.created_at, now) + " ago")),
-                h("div", { style: { fontSize: 13, lineHeight: 1.55, wordBreak: "break-word" } }, mdBlocks(c.body || c.text || "", openFilePreview))));
+                h("div", { style: { fontSize: 13, lineHeight: 1.55, wordBreak: "break-word" } }, mdBlocks(c.body || c.text || "", makePathHandler(false)))));
           }))
         : muteSpan("\u2014 no comments \u2014");
       R.push(h("div", { key: "cm" }, section("Comments (" + comments.length + ")", null, commentList, { first: R.length === 0 })));
@@ -1202,7 +1223,7 @@
               h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", maxHeight: "70vh", height: "auto", objectFit: "contain", borderRadius: 6, boxShadow: "0 4px 18px rgba(0,0,0,.35)" } })),
             h("div", { style: { fontSize: 11, color: muted } }, (fp.mime || "image") + (fp.size ? " \u00b7 " + fmtBytes(fp.size) : "")))
         : (fp.text != null) ? ((isMd && !previewRaw)
-            ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(fp.text, navFilePreview))
+            ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(fp.text, makePathHandler(true)))
             : h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text))
         : h("div", { style: { color: muted, fontSize: 13, lineHeight: 1.6 } }, "No inline preview for this file type (" + (fp.mime || "unknown") + "). Use the Download button to open it.");
       var mdToggle = (isMd && fp.text != null) ? h("button", { onClick: function () { setPreviewRaw(!previewRaw); }, title: previewRaw ? "Show rendered markdown" : "Show raw text", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, cursor: "pointer" } }, previewRaw ? "Rendered" : "Raw") : null;
