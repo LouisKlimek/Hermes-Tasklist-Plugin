@@ -458,6 +458,13 @@
         if (col && col !== fgColor) setFgColor(col);
       } catch (e) {}
     }, [view, graphModel]);
+    s = useState({ x: 0, y: 0 }); var graphPan = s[0], setGraphPan = s[1];
+    s = useState(false); var panning = s[0], setPanning = s[1];
+    var zoomRef = useRef(1); zoomRef.current = graphZoom;
+    var panRef = useRef({ x: 0, y: 0 }); panRef.current = graphPan;
+    var panningRef = useRef(false);
+    var viewportRef = useRef(null);
+    var suppressClickRef = useRef(false);
     s = useState(""); var search = s[0], setSearch = s[1];
     s = useState(""); var fAssignee = s[0], setFAssignee = s[1];
     s = useState(false); var showArchived = s[0], setShowArchived = s[1];
@@ -1390,19 +1397,19 @@
       return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
     }, [view, scopeTasks, edges, showArchived, taskById]);
 
-    function graphView() {
+    // SVG is memoised so pan/zoom (which only transform the wrapper) never re-render the nodes.
+    var graphSvg = useMemo(function () {
       var gm = graphModel;
-      if (!gm || !gm.ids.length) return h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : "No tasks to graph in this scope.");
+      if (!gm || !gm.ids.length) return null;
       var par = gm.par, chi = gm.chi, pos = gm.pos;
       function reach(start, adj) { var out = {}, st = (adj[start] || []).slice(); while (st.length) { var x = st.pop(); if (out[x]) continue; out[x] = 1; (adj[x] || []).forEach(function (n) { st.push(n); }); } return out; }
       var hi = null;
       if (graphHover && pos[graphHover]) { var anc = reach(graphHover, par), des = reach(graphHover, chi); hi = {}; hi[graphHover] = 1; Object.keys(anc).forEach(function (k) { hi[k] = 1; }); Object.keys(des).forEach(function (k) { hi[k] = 1; }); }
       function nodeState(id) { var t = taskById[id]; if (!t) return "ready"; if (t.status === "done") return "done"; var ps = par[id]; if (!ps || !ps.length) return "ready"; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return "blocked"; } return "ready"; }
-      var stateColor = { done: statusMeta("done").dot, ready: statusMeta("ready").dot, blocked: statusMeta("blocked").dot };
+      var stateText = { done: muted, ready: accent, blocked: "#e06666" };
       var stateLabel = { done: "Done", ready: "Ready", blocked: "Blocked" };
       var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = fgColor || "#e5e7eb";
       var maxChars = Math.max(6, Math.floor((NODE_W - 52) / 6.7));
-      // edges
       var edgeEls = gm.edges.map(function (e, i) {
         var a = pos[e.from], b = pos[e.to]; if (!a || !b) return null;
         var x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2, dx = Math.max(34, (x2 - x1) / 2);
@@ -1414,38 +1421,59 @@
         else if (hi && on) { style.strokeDasharray = "6 8"; }
         return h("path", { key: "e" + i, className: cls, d: "M" + x1 + "," + y1 + " C" + (x1 + dx) + "," + y1 + " " + (x2 - dx) + "," + y2 + " " + x2 + "," + y2, fill: "none", stroke: col, strokeWidth: hi && on ? 2 : 1.3, opacity: hi ? (on ? 0.95 : 0.12) : 0.5, markerEnd: hi && on ? "url(#tl-arrow-hi)" : "url(#tl-arrow)", style: style });
       });
-      // stage headers
       var stageEls = []; for (var L = 0; L <= gm.maxLevel; L++) { var cx = 26 + L * (NODE_W + 88) + NODE_W / 2; stageEls.push(h("text", { key: "st" + L, className: graphAnim ? "tl-stage" : null, x: cx, y: 20, textAnchor: "middle", fill: "currentColor", opacity: 0.6, fontSize: 11, fontWeight: 600, style: graphAnim ? { letterSpacing: ".04em", animationDelay: (L * 55) + "ms" } : { letterSpacing: ".04em" } }, "Stage " + (L + 1))); }
-      // nodes
       var nodeEls = gm.ids.map(function (id) {
-        var t = taskById[id]; if (!t) return null; var p = pos[id]; var st = nodeState(id); var sc = stateColor[st];
+        var t = taskById[id]; if (!t) return null; var p = pos[id]; var st = nodeState(id);
         var dim = hi && !hi[id]; var hov = graphHover === id;
         var dm = statusMeta(t.status); var title = String(t.title || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "\u2026";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
-        var sub = stateLabel[st] + (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
+        var rest = (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
         return h("g", { key: id, transform: "translate(" + p.x + "," + p.y + ")" },
-          h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { setModalId(id); }, onMouseEnter: function () { setGraphHover(id); }, onMouseLeave: function () { setGraphHover(null); } },
-            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: hov ? accent : sc, strokeWidth: hov ? 2.4 : 1.6 }),
-            h("rect", { x: 0, y: 0, width: 5, height: NODE_H, rx: 2.5, ry: 2.5, fill: dm.dot }),
-            h("circle", { className: (st === "ready" && !dim) ? "tl-pulse" : null, cx: 22, cy: NODE_H / 2 - 8, r: 4.5, fill: sc }),
-            h("text", { x: 34, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
-            h("text", { x: 34, y: NODE_H / 2 + 14, fill: "currentColor", opacity: 0.62, fontSize: 10.5 }, sub)));
+          h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { if (suppressClickRef.current) return; setModalId(id); }, onMouseEnter: function () { if (panningRef.current) return; setGraphHover(id); }, onMouseLeave: function () { if (panningRef.current) return; setGraphHover(null); } },
+            h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: hov ? accent : borderC, strokeWidth: hov ? 2.2 : 1.3 }),
+            h("circle", { className: (st === "ready" && !dim) ? "tl-pulse" : null, cx: 21, cy: NODE_H / 2, r: 5, fill: dm.dot }),
+            h("text", { x: 36, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
+            h("text", { x: 36, y: NODE_H / 2 + 14, fontSize: 10.5 },
+              h("tspan", { fill: stateText[st], fontWeight: 600 }, stateLabel[st]),
+              rest ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null)));
       });
-      var svg = h("svg", { width: gm.W * graphZoom, height: gm.H * graphZoom, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
+      return h("svg", { width: gm.W, height: gm.H, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
         h("defs", null,
           h("marker", { id: "tl-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, h("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--muted-foreground, #9ca3af)" })),
           h("marker", { id: "tl-arrow-hi", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7.5, markerHeight: 7.5, orient: "auto-start-reverse" }, h("path", { d: "M0,0 L10,5 L0,10 z", fill: accent }))),
         h("g", null, edgeEls), h("g", null, stageEls), h("g", null, nodeEls));
+    }, [graphModel, graphHover, graphAnim, colorV, fgColor]);
+
+    function graphZoomAt(mx, my, factor) { var z = zoomRef.current, p = panRef.current, nz = Math.min(2.5, Math.max(0.35, z * factor)); if (nz === z) return; var rf = nz / z; setGraphPan({ x: mx - (mx - p.x) * rf, y: my - (my - p.y) * rf }); setGraphZoom(nz); }
+    function graphZoomButton(factor) { var el = viewportRef.current; if (!el) { setGraphZoom(function (z) { return Math.min(2.5, Math.max(0.35, z * factor)); }); return; } var r = el.getBoundingClientRect(); graphZoomAt(r.width / 2, r.height / 2, factor); }
+    function onGraphDown(e) {
+      if (e.button !== 0) return;
+      var p = panRef.current, d = { sx: e.clientX, sy: e.clientY, px: p.x, py: p.y, moved: false };
+      panningRef.current = true; setPanning(true);
+      function move(ev) { var dx = ev.clientX - d.sx, dy = ev.clientY - d.sy; if (!d.moved && Math.abs(dx) + Math.abs(dy) > 3) d.moved = true; setGraphPan({ x: d.px + dx, y: d.py + dy }); }
+      function up() { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); panningRef.current = false; setPanning(false); if (d.moved) { suppressClickRef.current = true; setTimeout(function () { suppressClickRef.current = false; }, 60); } }
+      window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+    }
+    useEffect(function () {
+      if (view !== "graph") return; var el = viewportRef.current; if (!el) return;
+      function onWheel(e) { e.preventDefault(); var r = el.getBoundingClientRect(); graphZoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp((-e.deltaY) * 0.0015)); }
+      el.addEventListener("wheel", onWheel, { passive: false });
+      return function () { el.removeEventListener("wheel", onWheel); };
+    }, [view, graphModel]);
+
+    function graphView() {
+      if (!graphModel || !graphModel.ids.length) return h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : "No tasks to graph in this scope.");
       function zBtn(lbl, fn, title) { return h("button", { onClick: fn, title: title, style: { background: bgMuted, color: "inherit", border: "1px solid " + borderC, borderRadius: 7, width: 30, height: 28, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" } }, lbl); }
       function legendDot(c, lbl) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: muted } }, h("span", { style: { width: 9, height: 9, borderRadius: 3, background: "transparent", border: "2px solid " + c } }), lbl); }
       var controls = h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { setGraphZoom(function (z) { return Math.max(0.4, Math.round((z - 0.1) * 10) / 10); }); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { setGraphZoom(function (z) { return Math.min(2, Math.round((z + 0.1) * 10) / 10); }); }, "Zoom in"), zBtn("\u21ba", function () { setGraphZoom(1); }, "Reset zoom")),
-        h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } }, legendDot(stateColor.ready, "Ready"), legendDot(stateColor.blocked, "Blocked (waiting on a parent)"), legendDot(stateColor.done, "Done")),
-        h("span", { style: { fontSize: 11.5, color: muted } }, "Left \u2192 right = dependency order \u00b7 click a task to open \u00b7 hover to trace its chain"));
+        h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } }, legendDot(accent, "Ready"), legendDot("#e06666", "Blocked (waiting on a parent)"), legendDot(muted, "Done")),
+        h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag to pan \u00b7 click a task to open \u00b7 hover to trace its chain"));
       return h("div", null, controls,
         h("span", { ref: fgProbeRef, "aria-hidden": "true", style: { position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0, pointerEvents: "none" } }, "\u200b"),
-        h("div", { style: { border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, overflow: "auto", maxHeight: "calc(100vh - 250px)", padding: 6 } }, svg));
+        h("div", { ref: viewportRef, onMouseDown: onGraphDown, style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
+          h("div", { style: { position: "absolute", left: 0, top: 0, transformOrigin: "0 0", transform: "translate(" + graphPan.x + "px," + graphPan.y + "px) scale(" + graphZoom + ")", willChange: "transform" } }, graphSvg)));
     }
 
     var main = h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
