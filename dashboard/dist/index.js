@@ -1186,12 +1186,16 @@
       if (!filePreview) return null;
       var fp = filePreview;
       var isMd = /markdown/i.test(fp.mime || "") || /\.(md|markdown)$/i.test(fp.name || fp.path || "");
+      var isImg = /^image\//i.test(fp.mime || "") || /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(fp.name || fp.path || "");
       var body = fp.loading ? h("div", { style: { color: muted, fontSize: 13 } }, fp.searching ? "File not at that path \u2014 searching the file tree\u2026" : "Loading\u2026")
         : fp.err ? h("div", { style: { color: "#f87171", fontSize: 13, lineHeight: 1.6 } }, "Could not open file: " + fp.err + (fp.searchedNoMatch ? " (no match found by searching either)" : "") + ". You can still try the Download button.")
+        : (isImg && fp.dataUrl) ? h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 10 } },
+            h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", width: "100%", borderRadius: 10, padding: 14, background: "repeating-conic-gradient(rgba(128,128,128,.14) 0% 25%, transparent 0% 50%) 50% / 20px 20px" } },
+              h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", maxHeight: "70vh", height: "auto", objectFit: "contain", borderRadius: 6, boxShadow: "0 4px 18px rgba(0,0,0,.35)" } })),
+            h("div", { style: { fontSize: 11, color: muted } }, (fp.mime || "image") + (fp.size ? " \u00b7 " + fmtBytes(fp.size) : "")))
         : (fp.text != null) ? ((isMd && !previewRaw)
             ? h("div", { style: { fontSize: 13.5, lineHeight: 1.65, wordBreak: "break-word" } }, mdBlocks(fp.text))
             : h("pre", { style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-courier, monospace)", fontSize: 12.5, lineHeight: 1.65 } }, fp.text))
-        : (/^image\//.test(fp.mime || "") && fp.dataUrl) ? h("img", { src: fp.dataUrl, alt: fp.name || fp.path, style: { maxWidth: "100%", height: "auto", borderRadius: 8 } })
         : h("div", { style: { color: muted, fontSize: 13, lineHeight: 1.6 } }, "No inline preview for this file type (" + (fp.mime || "unknown") + "). Use the Download button to open it.");
       var mdToggle = (isMd && fp.text != null) ? h("button", { onClick: function () { setPreviewRaw(!previewRaw); }, title: previewRaw ? "Show rendered markdown" : "Show raw text", style: { flex: "0 0 auto", background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, cursor: "pointer" } }, previewRaw ? "Rendered" : "Raw") : null;
       return h(Portal, { onClose: function () { setFilePreview(null); } },
