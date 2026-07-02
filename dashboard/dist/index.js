@@ -683,7 +683,7 @@
     }
     function openCreate() {
       setNotice(null);
-      var init = { title: "", status: (settableStatuses.indexOf("todo") !== -1 ? "todo" : (settableStatuses[0] || "todo")), priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", files: [] };
+      var init = { title: "", status: (settableStatuses.indexOf("todo") !== -1 ? "todo" : (settableStatuses[0] || "todo")), priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", files: [], parents: [], children: [] };
       draftInit.current = JSON.stringify(init);
       setDraft(init); setConfirmClose(false); setCreating(true);
     }
@@ -710,6 +710,8 @@
         if (d.body && d.body.trim()) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { body: d.body }); }).catch(function () {});
         if (d.list_id) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: d.list_id }); }).catch(function () {});
         if (d.files && d.files.length) { d.files.forEach(function (f) { chain = chain.then(function () { var fd = new FormData(); fd.append("file", f); return authFetch(KAPI + "/tasks/" + encodeURIComponent(id) + "/attachments" + bq(), { method: "POST", body: fd }); }).catch(function () {}); }); }
+        if (d.parents && d.parents.length) { d.parents.forEach(function (pid) { chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: pid, child_id: id }); }).catch(function () {}); }); }
+        if (d.children && d.children.length) { d.children.forEach(function (cid) { chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: id, child_id: cid }); }).catch(function () {}); }); }
         return chain;
       }).then(function () {
         closeCreate(); load(true); loadTreeFor(board); loadAssignees();
@@ -1590,6 +1592,29 @@
           cfield("List", h(DotSelect, { value: draft.list_id, options: listOpts, onChange: function (v) { upd({ list_id: v }); }, opts: { full: true, lg: true, search: true, onCreate: function (name) { return createListReturning(name, board); } } }))),
         h("div", { style: { height: 22 } }),
         cfield("Description", h("textarea", { value: draft.body, onChange: function (e) { upd({ body: e.target.value }); }, placeholder: "Add a description\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
+        h("div", { style: { height: 22 } }),
+        (function () {
+          var dParents = draft.parents || []; var dChildren = draft.children || [];
+          var dExisting = dParents.concat(dChildren);
+          var depNone = function () { return h("span", { style: { fontSize: 13, color: muted, fontStyle: "italic" } }, "none"); };
+          function depOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return dExisting.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (x.title || x.id) + "  \u00b7  " + String(x.id).slice(0, 10) }; })); }
+          function draftChip(lid, onRemove) {
+            var ct = taskById[lid];
+            return h("span", { key: lid, style: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, padding: "5px 7px 5px 12px", borderRadius: 999, border: "1px solid " + borderC, background: bgMuted } },
+              ct && ct.status ? Dot(statusMeta(ct.status).dot, 7) : null,
+              h("span", { title: ct ? (ct.title || lid) : lid, style: { maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: ct ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (ct.title || lid) : lid),
+              h("button", { onClick: function (e) { e.stopPropagation(); onRemove(); }, title: "Remove", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex" } }, XIcon(13)));
+          }
+          return cfield("Dependencies", h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+            h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
+              h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
+              dParents.length ? dParents.map(function (p) { return draftChip(p, function () { upd({ parents: dParents.filter(function (x) { return x !== p; }) }); }); }) : depNone(),
+              h(DotSelect, { value: "", options: depOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) upd({ parents: dParents.concat([v]) }); }, opts: { maxWidth: "240px", search: true } })),
+            h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
+              h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Children"),
+              dChildren.length ? dChildren.map(function (c) { return draftChip(c, function () { upd({ children: dChildren.filter(function (x) { return x !== c; }) }); }); }) : depNone(),
+              h(DotSelect, { value: "", options: depOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) upd({ children: dChildren.concat([v]) }); }, opts: { maxWidth: "240px", search: true } }))));
+        })(),
         h("div", { style: { height: 22 } }),
         cfield("Attachments", h("div", null,
           h("label", { style: { display: "inline-flex", alignItems: "center", gap: 7, background: "transparent", color: "inherit", border: "1px dashed " + borderC, borderRadius: 8, padding: "9px 14px", fontSize: 12.5, cursor: "pointer" } },
