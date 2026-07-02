@@ -167,9 +167,10 @@ Agents *can* opt into the lists, though — see below.
 The plugin ships a second half that files tasks into lists **by itself** — no orchestrator wiring, no agent prompt changes, no provider keys. It's a Hermes *hook plugin* (`plugin.yaml` + `__init__.py` next to `dashboard/`) that registers the kanban lifecycle hooks `kanban_task_claimed` and `kanban_task_completed`. When a task first moves through the board it:
 
 1. reads the task title/body straight from `kanban.db` (read‑only),
-2. reads the board's existing lists,
-3. asks your **active model** via host‑owned `ctx.llm.complete_structured()` for the best‑fitting existing list — or a short new one if none fits,
-4. writes the membership (creating the list if needed) into the same `lists.db` the dashboard reads.
+2. **if the task has a parent already filed in a list, it adopts the parent's list directly — no model call.** This is deterministic and is the reliable path for subtasks created automatically by AI via the API, which would otherwise default to **No list**. When a parent is filed, any of its still‑unsorted children (and their children, recursively) adopt the same list too — so a child claimed *before* its parent was sorted gets repaired the next time the parent moves through a hook.
+3. otherwise reads the board's existing lists,
+4. asks your **active model** via host‑owned `ctx.llm.complete_structured()` for the best‑fitting existing list — or a short new one if none fits,
+5. writes the membership (creating the list if needed) into the same `lists.db` the dashboard reads.
 
 Enable it once:
 
@@ -181,10 +182,11 @@ After that, new tasks land in the right list (or a freshly‑created one) as the
 
 Notes & honest caveats:
 
-- **No `created` hook exists in Hermes**, so the earliest signal is `claimed` — tasks are sorted when work *starts* on them, not the instant they're created. `completed` acts as a backstop.
+- **Children follow their parent for free.** Parent inheritance is a plain lookup against `task_links` + `lists.db` — no model call, no cost, fully deterministic. Only *parentless* tasks (or children whose parents aren't in any list) fall through to the LLM classifier. A task with **multiple parents** adopts the first parent (by link insertion order) that already has a list, so placement is reproducible.
+- **No `created` hook exists in Hermes**, so the earliest signal is `claimed` — tasks are sorted when work *starts* on them, not the instant they're created. `completed` acts as a backstop. Because parent inheritance also propagates downward whenever a parent passes through a hook, an already‑placed parent fixes up its unsorted children on its next `claimed`/`completed` event.
 - It reuses existing lists by case‑insensitive name (never duplicates) and only creates a list when the model decides none fit.
-- It's **best‑effort**: any failure (model unavailable in your build's worker‑hook context, db hiccup) is swallowed — it can never break a board transition. If `ctx.llm` isn't wired in that context on your Hermes version, auto‑sort simply no‑ops and the manual lists keep working.
-- **Cost**: one small structured model call per first‑seen task. On a busy board pin a cheap model under `plugins.entries.tasklist.llm.allowed_models` in `config.yaml`.
+- It's **best‑effort**: any failure (model unavailable in your build's worker‑hook context, db hiccup) is swallowed — it can never break a board transition. If `ctx.llm` isn't wired in that context on your Hermes version, auto‑sort simply no‑ops and the manual lists keep working. Parent inheritance still works even when `ctx.llm` is absent, since it never calls the model.
+- **Cost**: at most one small structured model call per first‑seen *parentless* task. Children inheriting a parent's list cost nothing. On a busy board pin a cheap model under `plugins.entries.tasklist.llm.allowed_models` in `config.yaml`.
 
 ### Manual / explicit alternative — the CLI
 

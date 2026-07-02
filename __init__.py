@@ -16,11 +16,17 @@ It registers two kanban lifecycle hooks:
 On either event, for a task that isn't already in a list, it:
 
 1. reads the task's title/body (read-only, straight from kanban.db),
-2. reads the board's existing lists from the TaskList DB,
-3. asks the user's *active* model — via host-owned ``ctx.llm`` (no provider
+2. **if the task has a parent already filed in a list, the child adopts the
+   parent's list directly — no model call.** This is deterministic and is the
+   reliable path for subtasks created automatically by AI via the API, which
+   would otherwise default to "No list". After a task is filed, any of its own
+   still-unsorted children adopt that list too, so a child claimed *before* its
+   parent was sorted is fixed up as soon as the parent lands.
+3. otherwise reads the board's existing lists from the TaskList DB,
+4. asks the user's *active* model — via host-owned ``ctx.llm`` (no provider
    keys live in this plugin) — for the single best-fitting existing list, or a
    short new list name if none fits,
-4. writes the membership (creating the list if needed) into the very same
+5. writes the membership (creating the list if needed) into the very same
    ``$HERMES_HOME/tasklist/lists.db`` the dashboard reads.
 
 Everything is best-effort: any failure (no ``ctx.llm`` in this context, model
@@ -165,6 +171,96 @@ def _kanban_db_path(board: str) -> Optional[Path]:
     return root / "kanban.db"
 
 
+def _parent_ids(board: str, task_id: str) -> list[str]:
+    """Return this task's parent ids from kanban.db's ``task_links`` (read-only).
+
+    Order is stable/deterministic (insertion order) so multi-parent tasks always
+    resolve to the same parent, keeping auto-placement reproducible.
+    """
+    path = _kanban_db_path(board)
+    if not path or not path.exists():
+        return []
+    try:
+        kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = kc.execute(
+                "SELECT parent_id FROM task_links WHERE child_id=? ORDER BY rowid",
+                (task_id,),
+            ).fetchall()
+        finally:
+            kc.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("tasklist autosort: cannot read parents of %s: %s", task_id, exc)
+        return []
+    return [r[0] for r in rows if r and r[0]]
+
+
+def _list_of_task(c: sqlite3.Connection, board: str, task_id: str) -> Optional[str]:
+    """Return the list_id a task currently belongs to on this board, or None."""
+    row = c.execute(
+        "SELECT list_id FROM membership WHERE board=? AND task_id=?", (board, task_id)
+    ).fetchone()
+    return row["list_id"] if row else None
+
+
+def _inherit_parent_list(c: sqlite3.Connection, board: str, task_id: str) -> Optional[str]:
+    """If this task has a parent that is already filed in a list, return that
+    parent's ``list_id`` so the child can adopt it. Deterministic, no model call.
+
+    Walks each parent in stable order and returns the first parent that already
+    has a list membership. This is what makes AI/API-created subtasks land in the
+    same list as their parent instead of defaulting to "No list".
+    """
+    for pid in _parent_ids(board, task_id):
+        lid = _list_of_task(c, board, pid)
+        if lid:
+            return lid
+    return None
+
+
+def _child_ids(board: str, task_id: str) -> list[str]:
+    """Return this task's direct child ids from ``task_links`` (read-only)."""
+    path = _kanban_db_path(board)
+    if not path or not path.exists():
+        return []
+    try:
+        kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = kc.execute(
+                "SELECT child_id FROM task_links WHERE parent_id=? ORDER BY rowid",
+                (task_id,),
+            ).fetchall()
+        finally:
+            kc.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("tasklist autosort: cannot read children of %s: %s", task_id, exc)
+        return []
+    return [r[0] for r in rows if r and r[0]]
+
+
+def _propagate_to_children(
+    c: sqlite3.Connection, board: str, task_id: str, list_id: str, _depth: int = 0
+) -> None:
+    """Push ``list_id`` onto any UNSORTED descendants of ``task_id``.
+
+    Covers the ordering case where a child was seen/claimed before its parent
+    was filed: once the parent lands in a list, its still-unsorted children (and
+    their children) adopt the same list. Bounded recursion depth guards against
+    pathological / cyclic link data.
+    """
+    if _depth > 25:
+        return
+    for cid in _child_ids(board, task_id):
+        if _already_in_list(c, board, cid):
+            continue  # respect manual / earlier placement on the child
+        _set_membership(c, board, cid, list_id)
+        logger.info(
+            "tasklist autosort: %s inherited list %s from ancestor %s",
+            cid, list_id, task_id,
+        )
+        _propagate_to_children(c, board, cid, list_id, _depth + 1)
+
+
 def _read_task(board: str, task_id: str) -> Optional[dict]:
     path = _kanban_db_path(board)
     if not path or not path.exists():
@@ -263,8 +359,25 @@ def _autosort(ctx: Any, task_id: str, board: Optional[str]) -> None:
         logger.debug("tasklist autosort: db open failed: %s", exc)
         return
     try:
-        if _already_in_list(c, board, task_id):
-            return  # respect manual / earlier placement
+        existing = _list_of_task(c, board, task_id)
+        if existing:
+            # Already placed (manual / earlier hook). Respect it, but still push
+            # this list down to any unsorted children — this is what repairs a
+            # child that was claimed BEFORE its parent got a list.
+            _propagate_to_children(c, board, task_id, existing)
+            return
+        # 1) Deterministic parent inheritance — a task created with a parent
+        #    adopts the parent's list (no model call). This is the reliable path
+        #    for AI/API-created subtasks that would otherwise land in "No list".
+        inherited = _inherit_parent_list(c, board, task_id)
+        if inherited:
+            _set_membership(c, board, task_id, inherited)
+            logger.info(
+                "tasklist autosort: %s inherited parent list %s", task_id, inherited
+            )
+            _propagate_to_children(c, board, task_id, inherited)
+            return
+        # 2) No usable parent list — fall back to LLM classification.
         task = _read_task(board, task_id)
         if not task or not (task.get("title") or task.get("body")):
             return
@@ -280,6 +393,9 @@ def _autosort(ctx: Any, task_id: str, board: Optional[str]) -> None:
             logger.info("tasklist autosort: created list %r on board %r", target["name"], board)
         _set_membership(c, board, task_id, target["id"])
         logger.info("tasklist autosort: %s -> %r", task_id, target["name"])
+        # Once a parent is filed, its still-unsorted children adopt the list too,
+        # covering the case where a child was claimed before its parent.
+        _propagate_to_children(c, board, task_id, target["id"])
     except Exception as exc:  # noqa: BLE001 — never break the board transition
         logger.warning("tasklist autosort failed for %s: %s", task_id, exc)
     finally:
