@@ -809,7 +809,20 @@
         if (ex) { setExplorerInstalled(true); if (ex.tab && ex.tab.path) setExplorerTab(ex.tab.path); }
       }).catch(function () {});
     }, []); // eslint-disable-line
-    function explorerHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + (explorerTabRef.current || "/file-explorer") + (isFilePath(clean) ? "?file=" : "?path=") + encodeURIComponent(clean); }
+    // Absolute paths coming straight from the backend (e.g. a task's
+    // workspace_path like "/opt/data/kanban/boards/.../workspaces/t_xxx") are
+    // rooted at the Hermes files root, which the File Explorer also serves as
+    // its own root. Passing the full "/opt/data/..." path would deep-link into
+    // "opt/data/..." *inside* that root, i.e. a non-existent duplicate. Strip
+    // the files-root prefix so the link resolves relative to the Explorer root.
+    function filesRoot() { var r = (typeof window !== "undefined" && window.__HERMES_FILES_ROOT__) || ""; return String(r).replace(/\/+$/, ""); }
+    function stripFilesRoot(p) {
+      var s = String(p);
+      var root = filesRoot() || "/opt/data";
+      if (root && (s === root || s.indexOf(root + "/") === 0)) return s.slice(root.length);
+      return s;
+    }
+    function explorerHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var clean = stripFilesRoot(String(p)).replace(/^\/+/, ""); return base + (explorerTabRef.current || "/file-explorer") + (isFilePath(clean) ? "?file=" : "?path=") + encodeURIComponent(clean); }
     function resolveFolderPath(relRaw) {
       var rel = String(relRaw).replace(/^\/+/, "");
       if (rel in folderCacheRef.current) return Promise.resolve(folderCacheRef.current[rel]);
