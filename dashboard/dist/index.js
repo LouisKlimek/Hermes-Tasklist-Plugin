@@ -1156,6 +1156,24 @@
       var muteSpan = function (txt) { return h("span", { style: { fontSize: 13, color: muted, fontStyle: "italic" } }, txt); };
       function field(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
       function readField(lbl, val) { return field(lbl, h("span", { style: { fontSize: 13, lineHeight: 1.3 } }, val || "\u2014")); }
+      // Workspace path rendered as a clickable link that opens in the Better
+      // Hermes File Explorer (when installed) or the built-in preview, reusing
+      // the same makePathHandler mechanism as descriptions/comments.
+      function workspaceField() {
+        var kind = task.workspace_kind || "";
+        var wp = task.workspace_path;
+        if (!wp) return readField("Workspace", kind);
+        var oh = makePathHandler(false);
+        var link = h("a", {
+          href: (oh.hrefFor ? oh.hrefFor(wp) : "#"),
+          target: "_blank",
+          rel: "noopener noreferrer",
+          title: "Open " + wp,
+          onClick: function (e) { e.preventDefault(); e.stopPropagation(); oh(wp); },
+          style: { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }
+        }, wp);
+        return field("Workspace", h("span", { style: { fontSize: 13, lineHeight: 1.3 } }, kind ? (kind + " \u00b7 ") : "", link));
+      }
       function secLabel(txt, right) { return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 } }, h("span", { style: { fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 700 } }, txt), right || null); }
       function section(label, right, body, opts) { opts = opts || {}; return h("div", { style: { padding: (opts.first ? "0" : "24px") + " 0 0", marginTop: opts.first ? 0 : 24, borderTop: opts.first ? "none" : "1px solid " + borderC } }, secLabel(label, right), body); }
       function linkChip(lid, onRemove) {
@@ -1172,7 +1190,7 @@
         field("Priority", h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, lg: true } })),
         field("Assignee", h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { full: true, lg: true } })),
         field("List", h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { full: true, lg: true, search: true, onCreate: function (name) { return createListReturning(name, board); } } })),
-        readField("Workspace", task.workspace_path ? (task.workspace_kind + " \u00b7 " + task.workspace_path) : task.workspace_kind),
+        workspaceField(),
         readField("Created by", task.created_by),
         task.tenant ? readField("Tenant", task.tenant) : null
       );
