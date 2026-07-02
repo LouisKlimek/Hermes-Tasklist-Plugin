@@ -484,7 +484,7 @@
     useEffect(function () {
       if (typeof window === "undefined" || !window.matchMedia) return;
       var mq = window.matchMedia("(max-width: 820px)");      // mobile: modal fullscreen + sidebar stacking
-      var mc = window.matchMedia("(max-width: 1080px)");     // compact: task rows become cards (title gets full width)
+      var mc = window.matchMedia("(max-width: 1400px)");     // compact: task rows become cards (title gets full width)
       function on() { setIsNarrow(mq.matches); setSidebarOpen(!mq.matches); setIsCompact(mc.matches); }
       on();
       if (mq.addEventListener) { mq.addEventListener("change", on); mc.addEventListener("change", on); }
