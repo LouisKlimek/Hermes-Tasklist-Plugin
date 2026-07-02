@@ -332,21 +332,41 @@
     var st = useState(false); var open = st[0], setOpen = st[1];
     var ps = useState(null); var pos = ps[0], setPos = ps[1];
     var qs = useState(""); var query = qs[0], setQuery = qs[1];
+    // On mobile the anchored fixed dropdown can spill off-screen, so we render it
+    // as a centered modal (with backdrop + close button) instead. Track viewport.
+    var ms = useState(function () { return (typeof window !== "undefined" && window.innerWidth <= 640); }); var mobile = ms[0], setMobile = ms[1];
     var ref = useRef(null); var btnRef = useRef(null);
+    useEffect(function () {
+      if (typeof window === "undefined" || !window.matchMedia) return;
+      var mq = window.matchMedia("(max-width: 640px)");
+      function on() { setMobile(mq.matches); }
+      on();
+      if (mq.addEventListener) mq.addEventListener("change", on); else if (mq.addListener) mq.addListener(on);
+      return function () { if (mq.removeEventListener) mq.removeEventListener("change", on); else if (mq.removeListener) mq.removeListener(on); };
+    }, []);
     useEffect(function () { if (open) setQuery(""); }, [open]);
     useEffect(function () {
       if (!open) return;
+      // On mobile the modal overlay handles dismissal itself (backdrop tap / close
+      // button), and the page scroll-to-close behaviour would fight the modal.
+      if (mobile) {
+        function onKeyM(e) { if (e.key === "Escape") setOpen(false); }
+        document.addEventListener("keydown", onKeyM);
+        return function () { document.removeEventListener("keydown", onKeyM); };
+      }
       function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
       function onKey(e) { if (e.key === "Escape") setOpen(false); }
       function onScroll(e) { if (e && e.target && ref.current && ref.current.contains && ref.current.contains(e.target)) return; setOpen(false); }
       document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
       window.addEventListener("scroll", onScroll, true); window.addEventListener("resize", onScroll);
       return function () { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", onScroll); };
-    }, [open]);
+    }, [open, mobile]);
     function toggle() {
       if (open) { setOpen(false); return; }
-      var r = btnRef.current ? btnRef.current.getBoundingClientRect() : null;
-      if (r) { var up = (window.innerHeight - r.bottom) < (opts.search ? 340 : 260); setPos({ left: r.left, width: r.width, top: up ? null : Math.round(r.bottom + 4), bottom: up ? Math.round(window.innerHeight - r.top + 4) : null }); }
+      if (!mobile) {
+        var r = btnRef.current ? btnRef.current.getBoundingClientRect() : null;
+        if (r) { var up = (window.innerHeight - r.bottom) < (opts.search ? 340 : 260); setPos({ left: r.left, width: r.width, top: up ? null : Math.round(r.bottom + 4), bottom: up ? Math.round(window.innerHeight - r.top + 4) : null }); }
+      }
       setOpen(true);
     }
     var cur = null; for (var i = 0; i < options.length; i++) { if (String(options[i].value) === String(value)) { cur = options[i]; break; } }
@@ -362,12 +382,31 @@
     var qTrim = query.trim();
     var exactMatch = options.some(function (o) { return String(o.label).toLowerCase() === qTrim.toLowerCase(); });
     var createRow = (opts.onCreate && qTrim && !exactMatch) ? h("div", { onClick: function () { var r = opts.onCreate(qTrim); if (r && r.then) { r.then(function (v) { if (v != null) onChange(v); }); } setOpen(false); }, style: { display: "flex", alignItems: "center", gap: 7, padding: "8px 9px", margin: "2px 0 0", borderTop: "1px solid " + borderC, borderRadius: 6, cursor: "pointer", fontSize: 12.5, color: accent, fontWeight: 600 }, onMouseEnter: function (e) { e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { e.currentTarget.style.background = "transparent"; } }, h("span", { style: { fontSize: 15, lineHeight: 1 } }, "+"), h("span", null, "Create \u201c" + qTrim + "\u201d")) : null;
-    var menu = (open && pos) ? h("div", { style: { position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, minWidth: Math.max(pos.width, opts.search ? 230 : 150), maxWidth: 380, maxHeight: 320, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.55)", zIndex: 2000 } },
-      opts.search ? h("div", { style: { padding: 6, borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
-        h("input", { autoFocus: true, value: query, placeholder: opts.onCreate ? "Search or type to create\u2026" : "Search\u2026", onChange: function (e) { setQuery(e.target.value); }, onKeyDown: function (e) { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } if (e.key === "Enter" && createRow) { e.preventDefault(); var r = opts.onCreate(qTrim); if (r && r.then) { r.then(function (v) { if (v != null) onChange(v); }); } setOpen(false); } }, className: "font-courier", style: { width: "100%", boxSizing: "border-box", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: "6px 8px", fontSize: 12.5 } })) : null,
-      h("div", { style: { overflow: "auto", padding: 4, flex: "1 1 auto" } },
-        filtered.length ? filtered.map(optRow) : (createRow ? null : h("div", { style: { padding: "8px 9px", fontSize: 12, color: muted } }, "No matches")),
-        createRow)) : null;
+    // Shared inner pieces so the search + option list behave identically whether
+    // rendered as the desktop anchored dropdown or the mobile centered modal.
+    var searchBox = opts.search ? h("div", { style: { padding: mobile ? 10 : 6, borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+      h("input", { autoFocus: true, value: query, placeholder: opts.onCreate ? "Search or type to create\u2026" : "Search\u2026", onChange: function (e) { setQuery(e.target.value); }, onKeyDown: function (e) { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } if (e.key === "Enter" && createRow) { e.preventDefault(); var r = opts.onCreate(qTrim); if (r && r.then) { r.then(function (v) { if (v != null) onChange(v); }); } setOpen(false); } }, className: "font-courier", style: { width: "100%", boxSizing: "border-box", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 6, padding: mobile ? "10px 12px" : "6px 8px", fontSize: mobile ? 16 : 12.5 } })) : null;
+    var optionList = h("div", { style: { overflow: "auto", padding: 4, flex: "1 1 auto", WebkitOverflowScrolling: "touch" } },
+      filtered.length ? filtered.map(optRow) : (createRow ? null : h("div", { style: { padding: "8px 9px", fontSize: 12, color: muted } }, "No matches")),
+      createRow);
+    var menu;
+    if (open && mobile) {
+      // Centered, near-fullscreen modal with a backdrop that closes on tap and an
+      // explicit close (\u00d7) button, so nothing spills off small screens.
+      menu = h("div", { onClick: function (e) { if (e.target === e.currentTarget) setOpen(false); }, style: { position: "fixed", inset: 0, zIndex: 4000, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, boxSizing: "border-box" } },
+        h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "100%", maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 12, boxShadow: "0 18px 50px rgba(0,0,0,.6)" } },
+          h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 12px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+            h("span", { style: { fontSize: 13, fontWeight: 600, color: "inherit", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, opts.title || (opts.search ? "Search" : "Select")),
+            h("button", { type: "button", "aria-label": "Close", onClick: function () { setOpen(false); }, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, width: 30, height: 30, fontSize: 18, lineHeight: 1, cursor: "pointer", flex: "0 0 auto" } }, "\u00d7")),
+          searchBox,
+          optionList));
+    } else if (open && pos) {
+      menu = h("div", { style: { position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, minWidth: Math.max(pos.width, opts.search ? 230 : 150), maxWidth: 380, maxHeight: 320, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--background, #111)", border: "1px solid " + borderC, borderRadius: 8, boxShadow: "0 12px 34px rgba(0,0,0,.55)", zIndex: 2000 } },
+        searchBox,
+        optionList);
+    } else {
+      menu = null;
+    }
     return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block", minWidth: 0, maxWidth: "100%", width: opts.full ? "100%" : undefined } },
       h("button", { ref: btnRef, type: "button", onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
         cur && cur.dot ? Dot(cur.dot, 9) : null,
@@ -1237,11 +1276,11 @@
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
           parents.length ? parents.map(function (p) { return linkChip(p, function () { removeLink(p, id); }); }) : muteSpan("none"),
-          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) addLink(v, id); }, opts: { maxWidth: "240px", search: true } }) : null),
+          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) addLink(v, id); }, opts: { maxWidth: "240px", search: true, title: "Add parent" } }) : null),
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Children"),
           children.length ? children.map(function (c) { return linkChip(c, function () { removeLink(id, c); }); }) : muteSpan("none"),
-          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) addLink(id, v); }, opts: { maxWidth: "240px", search: true } }) : null));
+          d ? h(DotSelect, { value: "", options: otherOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) addLink(id, v); }, opts: { maxWidth: "240px", search: true, title: "Add child" } }) : null));
       L.push(h("div", { key: "deps" }, section("Dependencies", null, depBody)));
 
       // ---- Result ------------------------------------------------------------
@@ -1609,11 +1648,11 @@
             h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
               h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
               dParents.length ? dParents.map(function (p) { return draftChip(p, function () { upd({ parents: dParents.filter(function (x) { return x !== p; }) }); }); }) : depNone(),
-              h(DotSelect, { value: "", options: depOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) upd({ parents: dParents.concat([v]) }); }, opts: { maxWidth: "240px", search: true } })),
+              h(DotSelect, { value: "", options: depOpts("\u2014 add parent \u2014"), onChange: function (v) { if (v) upd({ parents: dParents.concat([v]) }); }, opts: { maxWidth: "240px", search: true, title: "Add parent" } })),
             h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
               h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Children"),
               dChildren.length ? dChildren.map(function (c) { return draftChip(c, function () { upd({ children: dChildren.filter(function (x) { return x !== c; }) }); }); }) : depNone(),
-              h(DotSelect, { value: "", options: depOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) upd({ children: dChildren.concat([v]) }); }, opts: { maxWidth: "240px", search: true } }))));
+              h(DotSelect, { value: "", options: depOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) upd({ children: dChildren.concat([v]) }); }, opts: { maxWidth: "240px", search: true, title: "Add child" } }))));
         })(),
         h("div", { style: { height: 22 } }),
         cfield("Attachments", h("div", null,
