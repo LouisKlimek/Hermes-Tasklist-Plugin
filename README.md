@@ -314,3 +314,7 @@ deep-links paths straight into the Explorer — files via `…/file-explorer?fil
 and **folders** via `…/file-explorer?path=<dir>` (folder paths only become clickable
 when the Explorer is present). No configuration needed; without the Explorer the
 built-in viewer is used.
+
+- **Create lists inline from a task.** The List dropdown in a task's detail popup lets you type a new list name and create it on the spot; the task is assigned to the new list immediately.
+
+- **Archive with confirmation + an Archived view.** Archiving a task from its detail popup now asks for confirmation first (unarchiving stays one click). A dedicated **Archived** entry in each board's sidebar lists archived tasks; open one to unarchive it, or drag a task onto Archived to archive it.

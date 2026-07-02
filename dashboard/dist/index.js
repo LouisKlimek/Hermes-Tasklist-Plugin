@@ -121,12 +121,19 @@
   }
 
   function mdCodeStyle() { return { fontFamily: "var(--font-courier, monospace)", fontSize: "0.9em", background: "rgba(128,128,128,.18)", border: "1px solid rgba(128,128,128,.28)", borderRadius: 4, padding: "0.5px 5px", color: "inherit" }; }
+  // Force readable code colours with !important, applied via a ref so they beat any
+  // global dashboard/prose stylesheet (which can otherwise render code white-on-white).
+  // These props are kept OUT of the React style object so re-renders don't drop the priority.
+  function fsImp(el, pairs) { if (!el || !el.style || !el.style.setProperty) return; for (var k in pairs) { try { el.style.setProperty(k, pairs[k], "important"); } catch (e) {} } }
+  function refPreBlock(el) { fsImp(el, { background: "#1e1e22", color: "#e5e7eb", border: "1px solid rgba(255,255,255,.14)" }); }
+  function refPreCode(el) { fsImp(el, { background: "transparent", color: "#e5e7eb" }); }
+  function refInlineCode(el) { fsImp(el, { background: "rgba(127,127,127,.22)", color: "inherit", border: "1px solid rgba(127,127,127,.3)" }); }
   function mdInline(s, onOpen) {
     var out = [], rest = String(s == null ? "" : s), key = 0;
     function pstate(cand, isFile) { if (!onOpen || !onOpen.known) return "valid"; var st = onOpen.known(cand); if (st === undefined) { if (onOpen.ensure) onOpen.ensure(cand, isFile); return "pending"; } return st; }
     function panchor(cand, label, style, kk) { return h("a", { key: kk, href: (onOpen.hrefFor ? onOpen.hrefFor(cand) : filesDownloadHref(cand)), target: "_blank", rel: "noopener noreferrer", title: "Open " + cand, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(cand); }, style: style }, label); }
     var pats = [
-      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp) && pstate(pp, true) === "valid") return panchor(pp, inner, Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }), "cl" + (key++)); return h("code", { key: "c" + (key++), style: mdCodeStyle() }, inner); } },
+      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp) && pstate(pp, true) === "valid") return panchor(pp, inner, Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }), "cl" + (key++)); return h("code", { key: "c" + (key++), ref: refInlineCode, style: { fontFamily: "var(--font-courier, monospace)", fontSize: "0.9em", borderRadius: 4, padding: "0.5px 5px" } }, inner); } },
       { re: /((?:https?:\/\/|www\.)[^\s<>()\[\]]+)/, mk: function (m) { var raw = m[1].replace(/[.,;:!?]+$/, ""); var href = /^www\./i.test(raw) ? ("https://" + raw) : raw; return h("a", { key: "u" + (key++), href: href, target: "_blank", rel: "noopener noreferrer", onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all" } }, raw); } },
       { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
@@ -173,7 +180,7 @@
     while (i < lines.length) {
       var line = lines[i];
       var fence = /^\s*```/.test(line);
-      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), style: { margin: "0 0 12px", background: "rgba(128,128,128,.14)", border: "1px solid rgba(128,128,128,.28)", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre", color: "inherit" } }, code.join("\n")))); continue; }
+      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), ref: refPreBlock, style: { margin: "0 0 12px", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { ref: refPreCode, style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre" } }, code.join("\n")))); continue; }
       var hd = /^(#{1,6})\s+(.*)$/.exec(line);
       if (hd) { var lvl = hd[1].length; blocks.push(h("h" + Math.min(lvl, 6), { key: "h" + (key++), style: mdHeadingStyle(lvl) }, mdInline(hd[2].replace(/\s+#+\s*$/, ""), onOpen))); i++; continue; }
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { blocks.push(h("hr", { key: "hr" + (key++), style: { border: "none", borderTop: "1px solid rgba(128,128,128,.28)", margin: "14px 0" } })); i++; continue; }
@@ -446,6 +453,7 @@
     s = useState(null); var modalId = s[0], setModalId = s[1];
     s = useState("details"); var modalTab = s[0], setModalTab = s[1];
     s = useState(null); var confirmDel = s[0], setConfirmDel = s[1];
+    s = useState(null); var confirmArchive = s[0], setConfirmArchive = s[1];
     s = useState(null); var confirmDelList = s[0], setConfirmDelList = s[1];
     s = useState(null); var filePreview = s[0], setFilePreview = s[1];
     s = useState(false); var previewRaw = s[0], setPreviewRaw = s[1];
@@ -457,7 +465,7 @@
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
     s = useState(false); var confirmClose = s[0], setConfirmClose = s[1];
     var draftInit = useRef(null);
-    useEffect(function () { setModalTab("details"); setConfirmDel(null); }, [modalId]);
+    useEffect(function () { setModalTab("details"); setConfirmDel(null); setConfirmArchive(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
     s = useState(""); var titleDraft = s[0], setTitleDraft = s[1];
@@ -584,11 +592,12 @@
     // load lists for every board so the whole tree + counts render
     useEffect(function () { boards.forEach(function (b) { loadTreeFor(b.slug); }); }, [boards, loadTreeFor]);
 
+    var wantArchived = showArchived || scope.type === "archived";
     var load = useCallback(function (silent) {
       if (!silent) setLoading(true);
-      getJSON(KAPI + "/board" + bq("include_archived=" + (showArchived ? "true" : "false"))).then(function (r) { lastEvent.current = r.latest_event_id; setData(r); setError(null); setLoading(false); })
+      getJSON(KAPI + "/board" + bq("include_archived=" + (wantArchived ? "true" : "false"))).then(function (r) { lastEvent.current = r.latest_event_id; setData(r); setError(null); setLoading(false); })
         .catch(function (e) { setError((e && e.message) || "Failed to load board"); setLoading(false); });
-    }, [bq, showArchived]);
+    }, [bq, wantArchived]);
     useEffect(function () { if (board) load(false); }, [load, board]);
 
     var loadEdges = useCallback(function () {
@@ -600,11 +609,11 @@
     useEffect(function () {
       var t = setInterval(function () {
         if (document.hidden || !boardRef.current) return;
-        var q = "?board=" + encodeURIComponent(boardRef.current) + "&include_archived=" + (showArchived ? "true" : "false");
+        var q = "?board=" + encodeURIComponent(boardRef.current) + "&include_archived=" + (wantArchived ? "true" : "false");
         getJSON(KAPI + "/board" + q).then(function (r) { if (r.latest_event_id !== lastEvent.current) { lastEvent.current = r.latest_event_id; setData(r); } }).catch(function () {});
       }, POLL_MS);
       return function () { clearInterval(t); };
-    }, [showArchived]);
+    }, [wantArchived]);
 
     var tasks = useMemo(function () { if (!data || !data.columns) return []; var o = []; data.columns.forEach(function (c) { (c.tasks || []).forEach(function (t) { o.push(t); }); }); return o; }, [data]);
     var boardCols = useMemo(function () { var a = []; if (data && data.columns) data.columns.forEach(function (c) { if (c && c.name) a.push(c.name); }); return a; }, [data]);
@@ -887,8 +896,9 @@
     function loadWorkerLog(id) { setWorkerLog(function (m) { var n = Object.assign({}, m); n[id] = { loading: true }; return n; }); getJSON(KAPI + "/tasks/" + encodeURIComponent(id) + "/log" + bq()).then(function (r) { setWorkerLog(function (m) { var n = Object.assign({}, m); n[id] = { content: (r && r.content) || "", loaded: true }; return n; }); }).catch(function () { setWorkerLog(function (m) { var n = Object.assign({}, m); n[id] = { content: "", loaded: true, error: true }; return n; }); }); }
 
     // ---- scope --------------------------------------------------------------
-    function inScope(t) { var lid = activeMembership[t.id]; var inAny = lid && liveListIds[lid]; if (scope.type === "unassigned") return !inAny; if (scope.type === "list") return lid === scope.id; return true; }
+    function inScope(t) { if (scope.type === "archived") return t.status === "archived"; if (t.status === "archived" && !showArchived) return false; var lid = activeMembership[t.id]; var inAny = lid && liveListIds[lid]; if (scope.type === "unassigned") return !inAny; if (scope.type === "list") return lid === scope.id; return true; }
     var scopeTitle = useMemo(function () {
+      if (scope.type === "archived") return "Archived";
       if (scope.type === "unassigned") return "No list";
       if (scope.type === "list") { var l = activeLists.filter(function (x) { return x.id === scope.id; })[0]; return l ? l.name : "List"; }
       return "All tasks";
@@ -902,7 +912,7 @@
         if (q) { var hay = ((t.title || "") + " " + (t.id || "") + " " + (t.body || "")).toLowerCase(); if (hay.indexOf(q) === -1) return false; }
         return true;
       });
-    }, [tasks, scope, activeMembership, liveListIds, search, fAssignee]);
+    }, [tasks, scope, activeMembership, liveListIds, search, fAssignee, showArchived]);
 
     // ---- subtask nesting helpers --------------------------------------------
     function hasKids(t) { var c = edges.children[t.id]; if (c) { for (var i = 0; i < c.length; i++) if (taskById[c[i]]) return true; } if (t.link_counts && t.link_counts.children > 0) return true; if (t.progress && t.progress.total > 0) return true; return false; }
@@ -935,7 +945,7 @@
       var idset = {}; scopeTasks.forEach(function (t) { idset[t.id] = 1; });
       var top = scopeTasks.filter(function (t) { var ps = edges.parents[t.id]; if (!ps) return true; for (var i = 0; i < ps.length; i++) if (idset[ps[i]]) return false; return true; });
       if (groupBy === "status") {
-        var cols = liveStatusOrder.filter(function (c) { return c !== "archived" || showArchived; });
+        var cols = liveStatusOrder.filter(function (c) { return c !== "archived" || showArchived || scope.type === "archived"; });
         var byCol = {}; top.forEach(function (t) { (byCol[t.status] || (byCol[t.status] = [])).push(t); });
         var out = [];
         cols.forEach(function (c) { var items = (byCol[c] || []).slice().sort(cmp); if (items.length || c === "todo") { var m = statusMeta(c); out.push({ key: c, label: m.label, dot: m.dot, items: items, status: c }); } });
@@ -1015,6 +1025,7 @@
         entryRow({ label: "All tasks", dot: null, active: board === slug && scope.type === "all", count: total, indent: 26, onClick: function () { activate(slug, { type: "all" }); } }),
         entryRow({ label: "No list", dot: "#52525b", active: board === slug && scope.type === "unassigned", count: total != null ? Math.max(0, total - assignedCount(slug)) : null, indent: 26, onClick: function () { activate(slug, { type: "unassigned" }); }, dropKey: slug === board ? "__none" : null, onDrop: function (id) { moveToList(id, null); } }),
         tree.lists.map(function (l) { return listEntry(l, slug); }),
+        entryRow({ label: "Archived", dot: statusMeta("archived").dot, active: board === slug && scope.type === "archived", count: null, indent: 26, onClick: function () { activate(slug, { type: "archived" }); }, dropKey: slug === board ? "__archive" : null, onDrop: function (id) { archiveTask(id, "archived"); } }),
         adding && adding.board === slug ? h("div", { style: { padding: "2px 8px 2px 30px" } }, addInput("List name\u2026", function (v) { createList(v, slug); })) : null
       ) : null;
       return h("div", { key: slug, style: { marginBottom: 2 } }, header, children);
@@ -1160,7 +1171,7 @@
         field("Status", h(DotSelect, { value: t.status, options: statusOptionsFor(t), onChange: function (v) { setStatus(t, v); }, opts: { full: true, lg: true } })),
         field("Priority", h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, lg: true } })),
         field("Assignee", h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { full: true, lg: true } })),
-        field("List", h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { full: true, lg: true } })),
+        field("List", h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { full: true, lg: true, search: true, onCreate: function (name) { return createListReturning(name, board); } } })),
         readField("Workspace", task.workspace_path ? (task.workspace_kind + " \u00b7 " + task.workspace_path) : task.workspace_kind),
         readField("Created by", task.created_by),
         task.tenant ? readField("Tenant", task.tenant) : null
@@ -1300,7 +1311,7 @@
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
-          h("button", { onClick: function () { archiveTask(t.id, t.status === "archived" ? "todo" : "archived"); }, title: t.status === "archived" ? "Unarchive task" : "Archive task", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, ArchiveIcon(16), isNarrow ? null : (t.status === "archived" ? "Unarchive" : "Archive")),
+          h("button", { onClick: function () { if (t.status === "archived") archiveTask(t.id, "todo"); else setConfirmArchive(t.id); }, title: t.status === "archived" ? "Unarchive task" : "Archive task", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, ArchiveIcon(16), isNarrow ? null : (t.status === "archived" ? "Unarchive" : "Archive")),
           h("button", { onClick: function () { setConfirmDel(t.id); }, title: "Delete task", style: { background: "transparent", color: "#f87171", border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, TrashIcon(16), isNarrow ? null : "Delete"),
           h("button", { onClick: function () { setModalId(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
         body);
@@ -1313,7 +1324,15 @@
               h("div", { style: { fontSize: 13, lineHeight: 1.55, color: muted, marginBottom: 20 } }, "This permanently deletes the task along with its comments, links, attachments and history. This can\u2019t be undone."),
               h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10 } },
                 h("button", { onClick: function () { setConfirmDel(null); }, "data-tl-close": "1", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
-                h("button", { onClick: function () { deleteTask(confirmDel); }, style: { background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 } }, TrashIcon(15), "Delete"))))) : null);
+                h("button", { onClick: function () { deleteTask(confirmDel); }, style: { background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 } }, TrashIcon(15), "Delete"))))) : null,
+        confirmArchive ? h(Portal, { onClose: function () { setConfirmArchive(null); } },
+          h("div", { onClick: function () { setConfirmArchive(null); }, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483600, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" } },
+            h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: "min(420px, 96vw)", background: cardBg, border: "1px solid " + borderC, borderRadius: 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", padding: "22px 24px" } },
+              h("div", { style: { fontSize: 16, fontWeight: 700, marginBottom: 10 } }, "Archive task?"),
+              h("div", { style: { fontSize: 13, lineHeight: 1.55, color: muted, marginBottom: 20 } }, "This moves the task to the Archived view and removes it from the active board. You can unarchive it again anytime from the Archived list."),
+              h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10 } },
+                h("button", { onClick: function () { setConfirmArchive(null); }, "data-tl-close": "1", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
+                h("button", { onClick: function () { var id = confirmArchive; setConfirmArchive(null); archiveTask(id, "archived"); }, style: { background: statusMeta("archived").dot, color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 } }, ArchiveIcon(15), "Archive"))))) : null);
     }
 
     // ---- page ---------------------------------------------------------------
@@ -1321,7 +1340,7 @@
     // ---- dependency graph (DAG) view ---------------------------------------
     var graphModel = useMemo(function () {
       if (view !== "graph") return null;
-      var list = scopeTasks.filter(function (t) { return showArchived || t.status !== "archived"; });
+      var list = scopeTasks.filter(function (t) { return showArchived || scope.type === "archived" || t.status !== "archived"; });
       var idset = {}; list.forEach(function (t) { idset[t.id] = 1; });
       var par = {}, chi = {}; list.forEach(function (t) { par[t.id] = []; chi[t.id] = []; });
       list.forEach(function (t) { (edges.parents[t.id] || []).forEach(function (pid) { if (idset[pid] && par[t.id].indexOf(pid) === -1) { par[t.id].push(pid); chi[pid].push(t.id); } }); });
@@ -1481,8 +1500,7 @@
       var controls = h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u26f6", graphFit, "Fit to screen"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
-          blockNavEl,
-          h("span", { style: { fontSize: 11.5, color: muted } }, "dot = task status")),
+          blockNavEl),
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
         h("div", { ref: viewportRef, onMouseDown: onGraphDown, className: (panning ? "tl-panning" : (spaceHeld ? "tl-space" : "")), style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
