@@ -82,7 +82,19 @@
   function hsize(n) { if (n == null) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function fmtPayload(p) { if (p == null || p === "") return ""; var str; try { str = typeof p === "string" ? p : JSON.stringify(p); } catch (e) { str = String(p); } return str; }
   function fmtBytes(n) { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
-  function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
+  // The File Explorer / /api/files serve paths RELATIVE to the Hermes files root
+  // (default /opt/data, override server-side with HERMES_FILES_ROOT). An absolute
+  // path like /opt/data/kanban/boards/x/workspaces/t_1 must therefore have that
+  // root stripped ("kanban/boards/x/workspaces/t_1") — NOT merely have its leading
+  // slash removed ("opt/data/kanban/…"), which pointed the link one level too deep.
+  function filesRoot() { var r = (typeof window !== "undefined" && window.__HERMES_FILES_ROOT__) || "/opt/data"; return String(r).replace(/\/+$/, ""); }
+  function stripFilesRoot(p) {
+    var s = String(p == null ? "" : p);
+    var root = filesRoot();
+    if (root && (s === root || s.indexOf(root + "/") === 0)) s = s.slice(root.length);
+    return s.replace(/^\/+/, "");
+  }
+  function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = stripFilesRoot(p); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
   function isFilePath(p) { return /\.[A-Za-z0-9]{1,8}$/.test(String(p).split("/").pop()); }
 
   // ── persistent path-resolution cache (survives page reloads) ──
@@ -809,7 +821,7 @@
         if (ex) { setExplorerInstalled(true); if (ex.tab && ex.tab.path) setExplorerTab(ex.tab.path); }
       }).catch(function () {});
     }, []); // eslint-disable-line
-    function explorerHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + (explorerTabRef.current || "/file-explorer") + (isFilePath(clean) ? "?file=" : "?path=") + encodeURIComponent(clean); }
+    function explorerHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var clean = stripFilesRoot(p); return base + (explorerTabRef.current || "/file-explorer") + (isFilePath(clean) ? "?file=" : "?path=") + encodeURIComponent(clean); }
     function resolveFolderPath(relRaw) {
       var rel = String(relRaw).replace(/^\/+/, "");
       if (rel in folderCacheRef.current) return Promise.resolve(folderCacheRef.current[rel]);
