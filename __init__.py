@@ -22,6 +22,14 @@ On either event, for a task that isn't already in a list, it:
    would otherwise default to "No list". After a task is filed, any of its own
    still-unsorted children adopt that list too, so a child claimed *before* its
    parent was sorted is fixed up as soon as the parent lands.
+
+   On **every** claimed/completed event the plugin also runs a cheap,
+   deterministic board-wide reconciliation sweep: any still-unsorted child
+   whose parent is already in a list is filed into that list. This is the
+   self-heal for the case where a child's *own* ``claimed`` hook (which fires in
+   the dispatcher process, not the worker) never ran this plugin — the next
+   hook on any task on the board repairs it, so nothing stays stuck in
+   "No list" just because one hook was missed.
 3. otherwise reads the board's existing lists from the TaskList DB,
 4. asks the user's *active* model — via host-owned ``ctx.llm`` (no provider
    keys live in this plugin) — for the single best-fitting existing list, or a
@@ -261,6 +269,81 @@ def _propagate_to_children(
         _propagate_to_children(c, board, cid, list_id, _depth + 1)
 
 
+def _all_task_links(board: str) -> list[tuple[str, str]]:
+    """Return every ``(child_id, parent_id)`` link on this board (read-only).
+
+    Ordered by rowid so the *first* parent of any multi-parent child is stable,
+    matching :func:`_inherit_parent_list`'s deterministic pick.
+    """
+    path = _kanban_db_path(board)
+    if not path or not path.exists():
+        return []
+    try:
+        kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = kc.execute(
+                "SELECT child_id, parent_id FROM task_links ORDER BY rowid"
+            ).fetchall()
+        finally:
+            kc.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("tasklist autosort: cannot read task_links: %s", exc)
+        return []
+    return [(r[0], r[1]) for r in rows if r and r[0] and r[1]]
+
+
+def _reconcile_unsorted_children(c: sqlite3.Connection, board: str) -> int:
+    """Self-healing sweep: file any UNSORTED child whose parent IS in a list.
+
+    This is the safety net that closes the gap where a child's *own*
+    ``kanban_task_claimed`` hook never applied inheritance — e.g. the
+    ``claimed`` hook fires in the DISPATCHER process (see module docstring and
+    Hermes' VALID_HOOKS docs), where this plugin's hook may not have run for a
+    fast task, so the child was left in "No list" even though its parent was
+    already filed. There is no ``kanban_task_created`` hook to lean on, so we
+    reconcile opportunistically on *every* claimed/completed event, for the
+    whole board — any later hook on any task repairs every still-unsorted child.
+
+    Purely deterministic and cheap: one read of ``task_links``, one membership
+    lookup per candidate, no model call. A child adopts the list of its first
+    (rowid-ordered) parent that is itself already filed, mirroring
+    :func:`_inherit_parent_list`. Manual / earlier placements are respected
+    (``_already_in_list`` guard). Returns the number of children filed.
+    """
+    links = _all_task_links(board)
+    if not links:
+        return 0
+    # parent -> its list, resolved lazily and memoized within this sweep.
+    _list_cache: dict[str, Optional[str]] = {}
+
+    def _list_for(pid: str) -> Optional[str]:
+        if pid not in _list_cache:
+            _list_cache[pid] = _list_of_task(c, board, pid)
+        return _list_cache[pid]
+
+    filed = 0
+    seen_children: set[str] = set()
+    for child_id, parent_id in links:
+        if child_id in seen_children:
+            continue  # keep only the first (rowid-ordered) parent decision
+        # Only lock the child to its first parent once we know that parent's
+        # placement; if the first parent has no list yet, fall through to any
+        # later parent link for the same child (stable across sweeps).
+        lid = _list_for(parent_id)
+        if not lid:
+            continue
+        seen_children.add(child_id)
+        if _already_in_list(c, board, child_id):
+            continue  # respect manual / earlier placement
+        _set_membership(c, board, child_id, lid)
+        filed += 1
+        logger.info(
+            "tasklist autosort: reconciled %s into parent %s's list %s",
+            child_id, parent_id, lid,
+        )
+    return filed
+
+
 def _read_task(board: str, task_id: str) -> Optional[dict]:
     path = _kanban_db_path(board)
     if not path or not path.exists():
@@ -349,6 +432,47 @@ def _classify(ctx: Any, task: dict, lists: list[dict]) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # the actual sort
 # --------------------------------------------------------------------------- #
+def _place_task(ctx: Any, c: sqlite3.Connection, task_id: str, board: str) -> None:
+    """Place a single task into its list (parent-inherit first, LLM fallback)."""
+    existing = _list_of_task(c, board, task_id)
+    if existing:
+        # Already placed (manual / earlier hook). Respect it, but still push
+        # this list down to any unsorted children — this is what repairs a
+        # child that was claimed BEFORE its parent got a list.
+        _propagate_to_children(c, board, task_id, existing)
+        return
+    # 1) Deterministic parent inheritance — a task created with a parent
+    #    adopts the parent's list (no model call). This is the reliable path
+    #    for AI/API-created subtasks that would otherwise land in "No list".
+    inherited = _inherit_parent_list(c, board, task_id)
+    if inherited:
+        _set_membership(c, board, task_id, inherited)
+        logger.info(
+            "tasklist autosort: %s inherited parent list %s", task_id, inherited
+        )
+        _propagate_to_children(c, board, task_id, inherited)
+        return
+    # 2) No usable parent list — fall back to LLM classification.
+    task = _read_task(board, task_id)
+    if not task or not (task.get("title") or task.get("body")):
+        return
+    lists = _existing_lists(c, board)
+    choice = _classify(ctx, task, lists)
+    if not choice:
+        return
+    target = _find_list_by_name(c, board, choice["name"])
+    if target is None:
+        # create it (model picked a name not present — that's the intent,
+        # whether or not it flagged create_new)
+        target = _create_list(c, board, choice["name"])
+        logger.info("tasklist autosort: created list %r on board %r", target["name"], board)
+    _set_membership(c, board, task_id, target["id"])
+    logger.info("tasklist autosort: %s -> %r", task_id, target["name"])
+    # Once a parent is filed, its still-unsorted children adopt the list too,
+    # covering the case where a child was claimed before its parent.
+    _propagate_to_children(c, board, task_id, target["id"])
+
+
 def _autosort(ctx: Any, task_id: str, board: Optional[str]) -> None:
     if not task_id:
         return
@@ -359,45 +483,24 @@ def _autosort(ctx: Any, task_id: str, board: Optional[str]) -> None:
         logger.debug("tasklist autosort: db open failed: %s", exc)
         return
     try:
-        existing = _list_of_task(c, board, task_id)
-        if existing:
-            # Already placed (manual / earlier hook). Respect it, but still push
-            # this list down to any unsorted children — this is what repairs a
-            # child that was claimed BEFORE its parent got a list.
-            _propagate_to_children(c, board, task_id, existing)
-            return
-        # 1) Deterministic parent inheritance — a task created with a parent
-        #    adopts the parent's list (no model call). This is the reliable path
-        #    for AI/API-created subtasks that would otherwise land in "No list".
-        inherited = _inherit_parent_list(c, board, task_id)
-        if inherited:
-            _set_membership(c, board, task_id, inherited)
-            logger.info(
-                "tasklist autosort: %s inherited parent list %s", task_id, inherited
-            )
-            _propagate_to_children(c, board, task_id, inherited)
-            return
-        # 2) No usable parent list — fall back to LLM classification.
-        task = _read_task(board, task_id)
-        if not task or not (task.get("title") or task.get("body")):
-            return
-        lists = _existing_lists(c, board)
-        choice = _classify(ctx, task, lists)
-        if not choice:
-            return
-        target = _find_list_by_name(c, board, choice["name"])
-        if target is None:
-            # create it (model picked a name not present — that's the intent,
-            # whether or not it flagged create_new)
-            target = _create_list(c, board, choice["name"])
-            logger.info("tasklist autosort: created list %r on board %r", target["name"], board)
-        _set_membership(c, board, task_id, target["id"])
-        logger.info("tasklist autosort: %s -> %r", task_id, target["name"])
-        # Once a parent is filed, its still-unsorted children adopt the list too,
-        # covering the case where a child was claimed before its parent.
-        _propagate_to_children(c, board, task_id, target["id"])
-    except Exception as exc:  # noqa: BLE001 — never break the board transition
-        logger.warning("tasklist autosort failed for %s: %s", task_id, exc)
+        # Place the task this hook fired for (parent-inherit or LLM fallback).
+        try:
+            _place_task(ctx, c, task_id, board)
+        except Exception as exc:  # noqa: BLE001 — never break the transition
+            logger.warning("tasklist autosort failed for %s: %s", task_id, exc)
+        # Board-level self-heal: file any OTHER still-unsorted child whose
+        # parent is already in a list. This is what fixes children whose own
+        # ``claimed`` hook (dispatcher process) never applied inheritance — the
+        # next hook on ANY task reconciles them. Deterministic, no model call.
+        try:
+            n = _reconcile_unsorted_children(c, board)
+            if n:
+                logger.info(
+                    "tasklist autosort: reconciled %d unsorted child task(s) on %r",
+                    n, board,
+                )
+        except Exception as exc:  # noqa: BLE001 — never break the transition
+            logger.warning("tasklist autosort reconcile failed on %r: %s", board, exc)
     finally:
         try:
             c.close()
