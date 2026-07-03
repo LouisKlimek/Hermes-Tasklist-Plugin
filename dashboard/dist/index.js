@@ -1377,8 +1377,8 @@
               : detailsScroll)
         : h("div", { style: { flex: "1 1 auto", display: "flex", flexDirection: "row", minHeight: 0, overflow: "hidden" } }, leftPane, rightPane);
 
-      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(1180px, 96vw)", height: isNarrow ? "100vh" : "94vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } },
-        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14, padding: isNarrow ? "14px 16px" : "20px 28px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(1180px, 96vw)", height: isNarrow ? "100dvh" : "94vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } },
+        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14, padding: isNarrow ? "calc(14px + env(safe-area-inset-top)) 16px 14px" : "20px 28px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
           h("div", { style: { paddingTop: isNarrow ? 6 : 8 } }, Dot(pri.color, 12)),
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
@@ -1616,7 +1616,7 @@
       var asgOpts2 = [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; }));
       var canSave = !!(draft.title || "").trim() && !savingNew;
 
-      var header = h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: isNarrow ? "14px 16px" : "18px 26px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+      var header = h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: isNarrow ? "calc(14px + env(safe-area-inset-top)) 16px 14px" : "18px 26px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
         h("span", { style: { width: 9, height: 9, borderRadius: "50%", background: accent, flex: "0 0 auto" } }),
         h("span", { style: { fontSize: isNarrow ? 16 : 18, fontWeight: 700, flex: "1 1 auto" } }, "New task"),
         h("button", { onClick: requestClose, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20)));
@@ -1671,7 +1671,7 @@
         h("button", { onClick: requestClose, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 8, padding: "9px 18px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
         h("button", { onClick: submitCreate, disabled: !canSave, style: { background: canSave ? accent : bgMuted, color: canSave ? "#fff" : muted, border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: canSave ? "pointer" : "not-allowed" } }, savingNew ? "Creating\u2026" : "Create task"));
 
-      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(680px, 96vw)", height: isNarrow ? "100vh" : "auto", maxHeight: isNarrow ? "100vh" : "92vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } }, header, body, footer);
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(680px, 96vw)", height: isNarrow ? "100dvh" : "auto", maxHeight: isNarrow ? "100dvh" : "92vh", overflow: "hidden", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" } }, header, body, footer);
 
       var hasTitle = !!(draft.title || "").trim();
       return h(Fragment, null,
