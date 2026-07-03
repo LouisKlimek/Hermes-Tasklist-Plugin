@@ -989,8 +989,23 @@
       } else if (!open && popupHistPushedRef.current) {
         // All popups closed via the UI (not via Back): consume our sentinel so a
         // subsequent Back press navigates normally instead of hitting a dead entry.
+        // history.back() lands on the entry that predates the sentinel, which may
+        // still carry the ?task=<deeplink> we baked in on open. Strip it once the
+        // pop lands so a subsequent F5 reload doesn't reopen the just-closed popup.
         popupHistPushedRef.current = false;
-        try { window.history.back(); } catch (e) {}
+        try {
+          window.addEventListener("popstate", function cleanupTaskParam() {
+            window.removeEventListener("popstate", cleanupTaskParam);
+            try {
+              var u = new URL(window.location.href);
+              if (u.searchParams.has("task")) {
+                u.searchParams.delete("task");
+                window.history.replaceState(null, "", u.pathname + (u.search || "") + (u.hash || ""));
+              }
+            } catch (e) {}
+          }, { once: true });
+          window.history.back();
+        } catch (e) {}
       }
     }, [modalId, creating, filePreview, dropdownTick]);
     // Intercept Back presses: while a popup is open, close the top layer and,
