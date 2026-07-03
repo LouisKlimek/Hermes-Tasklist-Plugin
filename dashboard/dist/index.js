@@ -213,6 +213,7 @@
   function ArchiveIcon(sz) { sz = sz || 16; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("rect", { x: 3, y: 4, width: 18, height: 4, rx: 1 }), h("path", { d: "M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" }), h("line", { x1: 10, y1: 12, x2: 14, y2: 12 })); }
   function PlusIcon(sz) { sz = sz || 14; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" }, h("line", { x1: 12, y1: 5, x2: 12, y2: 19 }), h("line", { x1: 5, y1: 12, x2: 19, y2: 12 })); }
   function PencilIcon(sz) { sz = sz || 12; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d: "M12 20h9" }), h("path", { d: "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" })); }
+  function FollowUpIcon(sz) { sz = sz || 14; return h("svg", { width: sz, height: sz, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: "0 0 auto" } }, h("path", { d: "M9 17H7A5 5 0 0 1 7 7h2" }), h("path", { d: "M15 7h2a5 5 0 0 1 0 10h-2" }), h("line", { x1: 8, y1: 12, x2: 16, y2: 12 })); }
 
   function getJSON(p) { return SDK.fetchJSON(p); }
   function send(method, p, body) { return SDK.fetchJSON(p, { method: method, headers: { "Content-Type": "application/json" }, body: body == null ? undefined : JSON.stringify(body) }); }
@@ -504,6 +505,8 @@
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
     s = useState(false); var confirmClose = s[0], setConfirmClose = s[1];
     var draftInit = useRef(null);
+    s = useState(null); var followup = s[0], setFollowup = s[1];   // { srcTask, feedback, route, priority } for the "Create follow-up from feedback" popup
+    s = useState(false); var savingFollowup = s[0], setSavingFollowup = s[1];
     useEffect(function () { setModalTab("details"); setConfirmDel(null); setConfirmArchive(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
@@ -756,6 +759,83 @@
         closeCreate(); load(true); loadTreeFor(board); loadAssignees();
       }).catch(function (e) { setSavingNew(false); setNotice("Could not create task: " + ((e && e.message) || "error")); });
     }
+
+    // ---- "Create follow-up from feedback" -----------------------------------
+    // Route options offered in the popup, mapped to a concrete board assignee.
+    // "auto" leaves the assignee empty so the board's normal routing decides.
+    var FOLLOWUP_ROUTES = [
+      { value: "auto", label: "Auto", assignee: "" },
+      { value: "developer", label: "Developer", assignee: "fullstack-developer" },
+      { value: "designer", label: "Designer", assignee: "designer" },
+      { value: "ceo", label: "CEO", assignee: "ceo" },
+      { value: "qa", label: "QA", assignee: "qa" }
+    ];
+    function followupRouteMeta(v) { for (var i = 0; i < FOLLOWUP_ROUTES.length; i++) if (FOLLOWUP_ROUTES[i].value === v) return FOLLOWUP_ROUTES[i]; return FOLLOWUP_ROUTES[0]; }
+    // Best-effort extraction of a GitHub pull-request URL from a task's body / detail.
+    function extractPullRequest(src) {
+      var texts = [];
+      if (src) {
+        if (src.body) texts.push(String(src.body));
+        var d = detail[src.id]; var dt = d && d.task;
+        if (dt && dt.body) texts.push(String(dt.body));
+      }
+      var joined = texts.join("\n");
+      var m = joined.match(/https?:\/\/github\.com\/[\w.\-]+\/[\w.\-]+\/pull\/\d+/i);
+      return m ? m[0] : "";
+    }
+    function openFollowup(src) {
+      if (!src) return;
+      setNotice(null);
+      // Make sure we have the freshest detail (body) for prefill.
+      loadDetail(src.id, false);
+      setFollowup({ srcTask: src, feedback: "", route: "auto", priority: "1" });
+      setSavingFollowup(false);
+    }
+    function closeFollowup() { setFollowup(null); setSavingFollowup(false); }
+    function submitFollowup() {
+      if (!followup || savingFollowup) return;
+      var src = followup.srcTask; if (!src) return;
+      var feedback = (followup.feedback || "").trim();
+      if (!feedback) { setNotice("Please enter the feedback for the follow-up."); return; }
+      setSavingFollowup(true); setNotice(null);
+      var route = followupRouteMeta(followup.route);
+      var pr = extractPullRequest(src);
+      // Compact human title derived from the first line of the feedback.
+      var firstLine = feedback.split(/\r?\n/)[0].trim();
+      var shortTitle = firstLine.length > 70 ? (firstLine.slice(0, 67) + "\u2026") : firstLine;
+      var title = "Follow-up: " + (shortTitle || (src.title || src.id));
+      var bodyLines = [
+        "Type:",
+        "Post-Merge Feedback",
+        "",
+        "Original Task:",
+        src.id
+      ];
+      if (pr) { bodyLines.push("", "Original Pull Request:", pr); }
+      bodyLines.push("", "Feedback:", feedback);
+      var body = bodyLines.join("\n");
+      var tp = KAPI + "/tasks/";
+      var newId = null;
+      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: false }).then(function (r) {
+        newId = (r && ((r.task && r.task.id) || r.id || r.task_id || r.taskId)) || null;
+        if (!newId) return;
+        var chain = Promise.resolve();
+        var prio = parseInt(followup.priority, 10);
+        if (!isNaN(prio)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { priority: prio }); }).catch(function () {});
+        if (route.assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { assignee: route.assignee }); }).catch(function () {});
+        chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { body: body }); }).catch(function () {});
+        // Keep the follow-up in the same list as the source task, when known.
+        var lid = activeMembership[src.id];
+        if (lid && liveListIds[lid]) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: newId, list_id: lid }); }).catch(function () {});
+        // Parent link: the new follow-up is a child of the original task.
+        chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: src.id, child_id: newId }); }).catch(function () {});
+        return chain;
+      }).then(function () {
+        closeFollowup(); load(true); loadTreeFor(board); loadAssignees(); loadEdges();
+        if (newId) setModalId(newId);
+      }).catch(function (e) { setSavingFollowup(false); setNotice("Could not create follow-up: " + ((e && e.message) || "error")); });
+    }
+
 
     // ---- detail-popup mutations (parity with the native kanban drawer) ------
     function reloadTask(id) { loadDetail(id, true); load(true); }
@@ -1134,7 +1214,8 @@
             h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { small: true, pill: true } }),
             h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { small: true, pill: true, maxWidth: "150px" } }),
             h(DotSelect, { value: activeMembership[t.id] && liveListIds[activeMembership[t.id]] ? activeMembership[t.id] : "", options: listOpts, onChange: function (v) { moveToList(t.id, v || null); }, opts: { small: true, pill: true, maxWidth: "140px" } }),
-            h("span", { style: { fontSize: 11, color: muted, marginLeft: "auto" } }, ago(t.created_at, now))
+            h("span", { style: { fontSize: 11, color: muted, marginLeft: "auto" } }, ago(t.created_at, now)),
+            t.status === "done" ? h("button", { onClick: function (e) { e.stopPropagation(); openFollowup(t); }, title: "Create follow-up from feedback", style: { background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 7, padding: "4px 8px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, flex: "0 0 auto" } }, FollowUpIcon(13), "Follow-up") : null
           )
         );
       }
@@ -1155,6 +1236,7 @@
           (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null)
         ),
         h("div", { style: { flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8 } },
+          t.status === "done" ? h("button", { onClick: function (e) { e.stopPropagation(); openFollowup(t); }, title: "Create follow-up from feedback", style: { background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 7, padding: 6, cursor: "pointer", display: "inline-flex", alignItems: "center", flex: "0 0 auto" } }, FollowUpIcon(14)) : null,
           cell(COLW.status, h(DotSelect, { value: t.status, options: statusOptionsFor(t), onChange: function (v) { setStatus(t, v); }, opts: { full: true, small: true, pill: true } })),
           cell(COLW.priority, h(DotSelect, { value: String(t.priority == null ? 0 : t.priority), options: prioOptions(t).map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(isNaN(n) ? 0 : n).color }; }), onChange: function (v) { setPriority(t, v); }, opts: { full: true, small: true, pill: true } })),
           cell(COLW.assignee, h(DotSelect, { value: t.assignee || "", options: [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; })), onChange: function (v) { setAssignee(t, v); }, opts: { full: true, small: true, pill: true } })),
@@ -1383,6 +1465,7 @@
           h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
             h("input", { value: titleDraft, onChange: function (e) { setTitleDraft(e.target.value); }, onBlur: function () { saveTitle(t); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }, className: "font-courier", style: { width: "100%", background: "transparent", color: "inherit", border: "1px solid transparent", borderRadius: 7, padding: "5px 8px", fontSize: isNarrow ? 17 : 21, fontWeight: 700 }, onFocus: function (e) { e.target.style.border = "1px solid " + borderC; }, title: "Edit title (Enter to save)" }),
             h("div", { style: { fontSize: 11.5, color: muted, fontFamily: "var(--font-courier, monospace)", padding: "3px 8px" } }, t.id)),
+          t.status === "done" ? h("button", { onClick: function () { openFollowup(t); }, title: "Create follow-up from feedback", style: { background: "transparent", color: accent, border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, FollowUpIcon(16), isNarrow ? null : "Follow-up") : null,
           h("button", { onClick: function () { if (t.status === "archived") archiveTask(t.id, "todo"); else setConfirmArchive(t.id); }, title: t.status === "archived" ? "Unarchive task" : "Archive task", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, ArchiveIcon(16), isNarrow ? null : (t.status === "archived" ? "Unarchive" : "Archive")),
           h("button", { onClick: function () { setConfirmDel(t.id); }, title: "Delete task", style: { background: "transparent", color: "#f87171", border: "1px solid " + borderC, borderRadius: 9, padding: isNarrow ? 8 : "8px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, flex: "0 0 auto" } }, TrashIcon(16), isNarrow ? null : "Delete"),
           h("button", { onClick: function () { setModalId(null); }, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20))),
@@ -1687,6 +1770,44 @@
                 h("button", { onClick: function () { setConfirmClose(false); submitCreate(); }, disabled: !hasTitle, title: hasTitle ? "" : "Add a title first", style: { background: hasTitle ? accent : bgMuted, color: hasTitle ? "#fff" : muted, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: hasTitle ? "pointer" : "not-allowed" } }, "Save task")))) ) : null);
     }
 
+    function followupModal() {
+      if (!followup) return null;
+      var src = followup.srcTask; if (!src) return null;
+      function upd(patch) { setFollowup(Object.assign({}, followup, patch)); }
+      function ffield(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
+      var routeOpts = FOLLOWUP_ROUTES.map(function (o) { return { value: o.value, label: o.label, dot: accent }; });
+      var prioOptsF = [{ value: "0", label: "Low" }, { value: "1", label: "Normal" }, { value: "2", label: "High" }].map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(n).color }; });
+      var pr = extractPullRequest(src);
+      var canSave = !!(followup.feedback || "").trim() && !savingFollowup;
+
+      var header = h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: isNarrow ? "14px 16px" : "18px 26px", borderBottom: "1px solid " + borderC, flex: "0 0 auto" } },
+        h("span", { style: { display: "inline-flex", color: accent, flex: "0 0 auto" } }, FollowUpIcon(18)),
+        h("span", { style: { fontSize: isNarrow ? 15 : 18, fontWeight: 700, flex: "1 1 auto" } }, "Create follow-up from feedback"),
+        h("button", { onClick: closeFollowup, "data-tl-close": "1", title: "Close (Esc)", style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 9, padding: 8, cursor: "pointer", display: "inline-flex", flex: "0 0 auto" } }, XIcon(20)));
+
+      function ctxRow(lbl, val) { return h("div", { style: { display: "flex", gap: 8, fontSize: 12.5, lineHeight: 1.5 } }, h("span", { style: { color: muted, flex: "0 0 auto", minWidth: 96 } }, lbl), h("span", { style: { flex: "1 1 auto", minWidth: 0, wordBreak: "break-all", fontFamily: "var(--font-courier, monospace)" } }, val)); }
+      var context = h("div", { style: { background: bgMuted, border: "1px solid " + borderC, borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, marginBottom: 22 } },
+        ctxRow("Type", "Post-Merge Feedback"),
+        ctxRow("Original Task", src.id + (src.title ? "  \u2014  " + src.title : "")),
+        pr ? ctxRow("Pull Request", pr) : null);
+
+      var body = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "16px" : "22px 26px" } },
+        context,
+        ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
+        h("div", { style: { height: 22 } }),
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px" } },
+          ffield("Route", h(DotSelect, { value: followup.route, options: routeOpts, onChange: function (v) { upd({ route: v }); }, opts: { full: true, lg: true } })),
+          ffield("Priority", h(DotSelect, { value: followup.priority, options: prioOptsF, onChange: function (v) { upd({ priority: v }); }, opts: { full: true, lg: true } }))));
+
+      var footer = h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10, padding: isNarrow ? "12px 16px" : "16px 26px", borderTop: "1px solid " + borderC, flex: "0 0 auto" } },
+        h("button", { onClick: closeFollowup, "data-tl-close": "1", style: { background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer" } }, "Cancel"),
+        h("button", { onClick: submitFollowup, disabled: !canSave, title: canSave ? "" : "Enter feedback first", style: { background: canSave ? accent : bgMuted, color: canSave ? "#fff" : muted, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: canSave ? "pointer" : "not-allowed", display: "inline-flex", alignItems: "center", gap: 7 } }, FollowUpIcon(15), savingFollowup ? "Creating\u2026" : "Create follow-up"));
+
+      var panel = h("div", { onClick: function (e) { e.stopPropagation(); }, style: { width: isNarrow ? "100vw" : "min(620px, 96vw)", maxHeight: isNarrow ? "100vh" : "90vh", background: cardBg, border: isNarrow ? "none" : "1px solid " + borderC, borderRadius: isNarrow ? 0 : 14, boxShadow: "0 24px 70px rgba(0,0,0,.6)", display: "flex", flexDirection: "column", overflow: "hidden" } }, header, body, footer);
+      return h(Portal, { onClose: closeFollowup },
+        h("div", { onClick: closeFollowup, "data-tl-backdrop": "1", style: { position: "fixed", inset: 0, zIndex: 2147483200, background: "rgba(0,0,0,.5)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: isNarrow ? "0" : "3vh 2vw" } }, panel));
+    }
+
     function listDeleteModal() {
       if (!confirmDelList) return null;
       var l = confirmDelList.l, slug = confirmDelList.slug;
@@ -1733,7 +1854,7 @@
             h("div", { style: { flex: "1 1 auto", overflow: "auto", padding: isNarrow ? "14px 16px" : "18px 22px" } }, body))));
     }
 
-    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal(), listDeleteModal(), filePreviewModal());
+    return h("div", { style: { display: "flex", flexDirection: isNarrow ? "column" : "row", alignItems: isNarrow ? "stretch" : "flex-start", fontFamily: "inherit" } }, (isNarrow && !sidebarOpen) ? null : sidebar, main, modal(), createModal(), followupModal(), listDeleteModal(), filePreviewModal());
   }
 
   window.__HERMES_PLUGINS__.register("tasklist", TaskListPage);
