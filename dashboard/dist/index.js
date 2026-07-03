@@ -1610,7 +1610,57 @@
       if (view !== "graph") return; var el = viewportRef.current; if (!el) return;
       function onWheel(e) { e.preventDefault(); var r = el.getBoundingClientRect(); graphZoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp((-e.deltaY) * 0.0015)); }
       el.addEventListener("wheel", onWheel, { passive: false });
-      return function () { el.removeEventListener("wheel", onWheel); };
+      // Touch: one finger drags to pan, two fingers pinch to zoom (about the pinch midpoint).
+      var t = { mode: 0, sx: 0, sy: 0, px: 0, py: 0, dist: 0, moved: false };
+      function dist2(a, b) { var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY; return Math.sqrt(dx * dx + dy * dy); }
+      function onTouchStart(e) {
+        var r = el.getBoundingClientRect(), p = panRef.current;
+        if (e.touches.length === 1) {
+          t.mode = 1; t.sx = e.touches[0].clientX; t.sy = e.touches[0].clientY; t.px = p.x; t.py = p.y; t.moved = false;
+          panningRef.current = true; setPanning(true);
+        } else if (e.touches.length >= 2) {
+          e.preventDefault();
+          t.mode = 2; t.dist = dist2(e.touches[0], e.touches[1]) || 1;
+          panningRef.current = false; setPanning(false);
+        }
+      }
+      function onTouchMove(e) {
+        var r = el.getBoundingClientRect();
+        if (t.mode === 1 && e.touches.length === 1) {
+          e.preventDefault();
+          var dx = e.touches[0].clientX - t.sx, dy = e.touches[0].clientY - t.sy;
+          if (!t.moved && Math.abs(dx) + Math.abs(dy) > 4) t.moved = true;
+          setGraphPan({ x: t.px + dx, y: t.py + dy });
+        } else if (t.mode === 2 && e.touches.length >= 2) {
+          e.preventDefault();
+          var nd = dist2(e.touches[0], e.touches[1]) || 1;
+          var mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+          var my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+          graphZoomAt(mx, my, nd / t.dist);
+          t.dist = nd;
+        }
+      }
+      function onTouchEnd(e) {
+        if (t.mode === 1 && t.moved) { suppressClickRef.current = true; setTimeout(function () { suppressClickRef.current = false; }, 60); }
+        if (e.touches.length === 0) { t.mode = 0; panningRef.current = false; setPanning(false); }
+        else if (e.touches.length === 1) {
+          // Dropped from pinch to a single finger: resume panning from the remaining touch.
+          var p = panRef.current;
+          t.mode = 1; t.sx = e.touches[0].clientX; t.sy = e.touches[0].clientY; t.px = p.x; t.py = p.y; t.moved = false;
+          panningRef.current = true; setPanning(true);
+        }
+      }
+      el.addEventListener("touchstart", onTouchStart, { passive: false });
+      el.addEventListener("touchmove", onTouchMove, { passive: false });
+      el.addEventListener("touchend", onTouchEnd);
+      el.addEventListener("touchcancel", onTouchEnd);
+      return function () {
+        el.removeEventListener("wheel", onWheel);
+        el.removeEventListener("touchstart", onTouchStart);
+        el.removeEventListener("touchmove", onTouchMove);
+        el.removeEventListener("touchend", onTouchEnd);
+        el.removeEventListener("touchcancel", onTouchEnd);
+      };
     }, [view, graphModel]);
     // Frame the graph nicely the first time it's shown (once the model is ready).
     useEffect(function () { if (view === "graph") fitPendingRef.current = true; }, [view]);
