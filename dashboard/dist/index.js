@@ -26,6 +26,16 @@
   var hooks = SDK.hooks;
   var useState = hooks.useState, useEffect = hooks.useEffect, useMemo = hooks.useMemo, useCallback = hooks.useCallback, useRef = hooks.useRef;
 
+  // Registry of currently-open inline dropdown popups (assignee / list / priority
+  // pickers rendered by DotSelect). Each entry is a { close } handle pushed when a
+  // dropdown opens and removed when it closes. The global mobile Back-button
+  // handler consults this so pressing Back closes the topmost open dropdown first,
+  // instead of dismissing the whole create/edit popup underneath it.
+  var OPEN_DROPDOWNS = [];
+  function registerDropdown(handle) { OPEN_DROPDOWNS.push(handle); return function () { var i = OPEN_DROPDOWNS.indexOf(handle); if (i !== -1) OPEN_DROPDOWNS.splice(i, 1); }; }
+  function anyDropdownOpen() { return OPEN_DROPDOWNS.length > 0; }
+  function closeTopDropdown() { var handle = OPEN_DROPDOWNS[OPEN_DROPDOWNS.length - 1]; if (!handle) return false; OPEN_DROPDOWNS.pop(); try { handle.close(); } catch (e) {} return true; }
+
   var KAPI = "/api/plugins/kanban";
   var TLAPI = "/api/plugins/tasklist";
   var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy", LS_VIEW = "tasklist.view";
@@ -346,6 +356,12 @@
       return function () { if (mq.removeEventListener) mq.removeEventListener("change", on); else if (mq.removeListener) mq.removeListener(on); };
     }, []);
     useEffect(function () { if (open) setQuery(""); }, [open]);
+    // While open, register a close handle so the global mobile Back-button handler
+    // can dismiss this dropdown (topmost layer) before touching the popup beneath.
+    useEffect(function () {
+      if (!open) return;
+      return registerDropdown({ close: function () { setOpen(false); } });
+    }, [open]);
     useEffect(function () {
       if (!open) return;
       // On mobile the modal overlay handles dismissal itself (backdrop tap / close
@@ -926,9 +942,12 @@
     // dismiss the topmost popup. We push a history sentinel whenever a popup is
     // open and, on popstate, close the topmost layer (re-pushing while any layer
     // remains) so the user stays on the current page until every popup is closed.
-    function anyPopupOpen() { return !!(modalIdRef.current || creatingRef.current || filePreviewRef.current); }
+    function anyPopupOpen() { return !!(anyDropdownOpen() || modalIdRef.current || creatingRef.current || filePreviewRef.current); }
     // Close the single topmost popup layer; returns true if one was closed.
     function closeTopPopup() {
+      // Inline dropdown pickers (assignee / list / priority) render above the
+      // create/edit popup, so a Back press must dismiss them first.
+      if (anyDropdownOpen()) { closeTopDropdown(); return true; }
       if (filePreviewRef.current) {
         if (filePreviewStackRef.current && filePreviewStackRef.current.length) backFilePreview();
         else closeFilePreview();
