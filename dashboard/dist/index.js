@@ -761,16 +761,6 @@
     }
 
     // ---- "Create follow-up from feedback" -----------------------------------
-    // Route options offered in the popup, mapped to a concrete board assignee.
-    // "auto" leaves the assignee empty so the board's normal routing decides.
-    var FOLLOWUP_ROUTES = [
-      { value: "auto", label: "Auto", assignee: "" },
-      { value: "developer", label: "Developer", assignee: "fullstack-developer" },
-      { value: "designer", label: "Designer", assignee: "designer" },
-      { value: "ceo", label: "CEO", assignee: "ceo" },
-      { value: "qa", label: "QA", assignee: "qa" }
-    ];
-    function followupRouteMeta(v) { for (var i = 0; i < FOLLOWUP_ROUTES.length; i++) if (FOLLOWUP_ROUTES[i].value === v) return FOLLOWUP_ROUTES[i]; return FOLLOWUP_ROUTES[0]; }
     // Best-effort extraction of a GitHub pull-request URL from a task's body / detail.
     function extractPullRequest(src) {
       var texts = [];
@@ -788,7 +778,8 @@
       setNotice(null);
       // Make sure we have the freshest detail (body) for prefill.
       loadDetail(src.id, false);
-      setFollowup({ srcTask: src, feedback: "", route: "auto", priority: "1" });
+      // Default the assignee to the same one as the source task we're leaving feedback on.
+      setFollowup({ srcTask: src, feedback: "", assignee: (src.assignee || ""), priority: "1" });
       setSavingFollowup(false);
     }
     function closeFollowup() { setFollowup(null); setSavingFollowup(false); }
@@ -798,7 +789,7 @@
       var feedback = (followup.feedback || "").trim();
       if (!feedback) { setNotice("Please enter the feedback for the follow-up."); return; }
       setSavingFollowup(true); setNotice(null);
-      var route = followupRouteMeta(followup.route);
+      var assignee = (followup.assignee || "").trim();
       var pr = extractPullRequest(src);
       // Compact human title derived from the first line of the feedback.
       var firstLine = feedback.split(/\r?\n/)[0].trim();
@@ -820,9 +811,11 @@
         newId = (r && ((r.task && r.task.id) || r.id || r.task_id || r.taskId)) || null;
         if (!newId) return;
         var chain = Promise.resolve();
+        // Newly-created cards default to "ready"; follow-ups must start in "todo".
+        chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { status: "todo" }); }).catch(function () {});
         var prio = parseInt(followup.priority, 10);
         if (!isNaN(prio)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { priority: prio }); }).catch(function () {});
-        if (route.assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { assignee: route.assignee }); }).catch(function () {});
+        if (assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { assignee: assignee }); }).catch(function () {});
         chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { body: body }); }).catch(function () {});
         // Keep the follow-up in the same list as the source task, when known.
         var lid = activeMembership[src.id];
@@ -1775,8 +1768,10 @@
       var src = followup.srcTask; if (!src) return null;
       function upd(patch) { setFollowup(Object.assign({}, followup, patch)); }
       function ffield(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
-      var routeOpts = FOLLOWUP_ROUTES.map(function (o) { return { value: o.value, label: o.label, dot: accent }; });
-      var prioOptsF = [{ value: "0", label: "Low" }, { value: "1", label: "Normal" }, { value: "2", label: "High" }].map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(n).color }; });
+      // Assignee options mirror the "New task" popup: every board profile, with search.
+      var asgOptsF = [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; }));
+      // Priority options mirror the "New task" popup exactly (same labels, values and colors).
+      var prioOptsF = [{ value: "3", label: "Urgent" }, { value: "2", label: "High" }, { value: "1", label: "Normal" }, { value: "0", label: "Low" }].map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(n).color }; });
       var pr = extractPullRequest(src);
       var canSave = !!(followup.feedback || "").trim() && !savingFollowup;
 
@@ -1796,7 +1791,7 @@
         ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
         h("div", { style: { height: 22 } }),
         h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px" } },
-          ffield("Route", h(DotSelect, { value: followup.route, options: routeOpts, onChange: function (v) { upd({ route: v }); }, opts: { full: true, lg: true } })),
+          ffield("Assignee", h(DotSelect, { value: followup.assignee || "", options: asgOptsF, onChange: function (v) { upd({ assignee: v }); }, opts: { full: true, lg: true, search: true } })),
           ffield("Priority", h(DotSelect, { value: followup.priority, options: prioOptsF, onChange: function (v) { upd({ priority: v }); }, opts: { full: true, lg: true } }))));
 
       var footer = h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 10, padding: isNarrow ? "12px 16px" : "16px 26px", borderTop: "1px solid " + borderC, flex: "0 0 auto" } },
