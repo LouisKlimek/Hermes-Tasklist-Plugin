@@ -541,6 +541,9 @@
     var boardRef = useRef(board); boardRef.current = board;
     var filePreviewRef = useRef(null); filePreviewRef.current = filePreview;
     var filePreviewStackRef = useRef([]); filePreviewStackRef.current = filePreviewStack;
+    // Refs so the global back-button (popstate) handler always sees live popup state.
+    var modalIdRef = useRef(null); modalIdRef.current = modalId;
+    var creatingRef = useRef(false); creatingRef.current = creating;
     var explorerRef = useRef(false); explorerRef.current = explorerInstalled;
     var explorerTabRef = useRef("/file-explorer"); explorerTabRef.current = explorerTab;
     var resolveCacheRef = useRef({});
@@ -916,6 +919,58 @@
     function navFilePreview(path) { var cur = filePreviewRef.current; if (cur) setFilePreviewStack(function (st) { return st.concat([cur]); }); loadFilePreview(path); }
     function backFilePreview() { var st = filePreviewStackRef.current || []; if (!st.length) { setFilePreview(null); return; } var prev = st[st.length - 1]; setFilePreviewStack(st.slice(0, -1)); setPreviewRaw(false); setFilePreview(prev); }
     function closeFilePreview() { setFilePreview(null); setFilePreviewStack([]); }
+
+    // ---- mobile back-button handling ---------------------------------------
+    // On mobile, the phone's Back button would otherwise navigate the dashboard
+    // to the previous page while a popup is open. Instead we want Back to just
+    // dismiss the topmost popup. We push a history sentinel whenever a popup is
+    // open and, on popstate, close the topmost layer (re-pushing while any layer
+    // remains) so the user stays on the current page until every popup is closed.
+    function anyPopupOpen() { return !!(modalIdRef.current || creatingRef.current || filePreviewRef.current); }
+    // Close the single topmost popup layer; returns true if one was closed.
+    function closeTopPopup() {
+      if (filePreviewRef.current) {
+        if (filePreviewStackRef.current && filePreviewStackRef.current.length) backFilePreview();
+        else closeFilePreview();
+        return true;
+      }
+      if (creatingRef.current) { requestClose(); return true; }
+      if (modalIdRef.current) { setModalId(null); return true; }
+      return false;
+    }
+    var closeTopPopupRef = useRef(closeTopPopup); closeTopPopupRef.current = closeTopPopup;
+    var anyPopupOpenRef = useRef(anyPopupOpen); anyPopupOpenRef.current = anyPopupOpen;
+    // Tracks whether we currently hold a pushed sentinel history entry.
+    var popupHistPushedRef = useRef(false);
+    // Push/keep a sentinel entry while at least one popup is open.
+    useEffect(function () {
+      if (typeof window === "undefined" || !window.history || !window.history.pushState) return;
+      var open = !!(modalId || creating || filePreview);
+      if (open && !popupHistPushedRef.current) {
+        try { window.history.pushState({ tlPopup: true }, ""); popupHistPushedRef.current = true; } catch (e) {}
+      } else if (!open && popupHistPushedRef.current) {
+        // All popups closed via the UI (not via Back): consume our sentinel so a
+        // subsequent Back press navigates normally instead of hitting a dead entry.
+        popupHistPushedRef.current = false;
+        try { window.history.back(); } catch (e) {}
+      }
+    }, [modalId, creating, filePreview]);
+    // Intercept Back presses: while a popup is open, close the top layer and,
+    // if any layer remains, re-push a sentinel so the next Back keeps closing.
+    useEffect(function () {
+      if (typeof window === "undefined") return;
+      function onPop() {
+        if (anyPopupOpenRef.current()) {
+          popupHistPushedRef.current = false;
+          closeTopPopupRef.current();
+          if (anyPopupOpenRef.current()) {
+            try { window.history.pushState({ tlPopup: true }, ""); popupHistPushedRef.current = true; } catch (e) {}
+          }
+        }
+      }
+      window.addEventListener("popstate", onPop);
+      return function () { window.removeEventListener("popstate", onPop); };
+    }, []);
     useEffect(function () {
       getJSON("/api/dashboard/plugins").then(function (list) {
         if (!Array.isArray(list)) return;
