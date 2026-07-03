@@ -32,9 +32,17 @@
   // handler consults this so pressing Back closes the topmost open dropdown first,
   // instead of dismissing the whole create/edit popup underneath it.
   var OPEN_DROPDOWNS = [];
-  function registerDropdown(handle) { OPEN_DROPDOWNS.push(handle); return function () { var i = OPEN_DROPDOWNS.indexOf(handle); if (i !== -1) OPEN_DROPDOWNS.splice(i, 1); }; }
+  // Subscribers notified whenever the open-dropdown set changes, so the global
+  // mobile Back-button sentinel can be pushed/consumed for standalone dropdowns
+  // (task-row pickers, add parent/child selectors, etc.) that aren't nested
+  // inside a create/edit/detail popup. On mobile every custom dropdown renders
+  // as a full-size modal, so Back must close it just like any other popup.
+  var DROPDOWN_SUBS = [];
+  function notifyDropdownSubs() { for (var s = 0; s < DROPDOWN_SUBS.length; s++) { try { DROPDOWN_SUBS[s](); } catch (e) {} } }
+  function subscribeDropdowns(fn) { DROPDOWN_SUBS.push(fn); return function () { var i = DROPDOWN_SUBS.indexOf(fn); if (i !== -1) DROPDOWN_SUBS.splice(i, 1); }; }
+  function registerDropdown(handle) { OPEN_DROPDOWNS.push(handle); notifyDropdownSubs(); return function () { var i = OPEN_DROPDOWNS.indexOf(handle); if (i !== -1) { OPEN_DROPDOWNS.splice(i, 1); notifyDropdownSubs(); } }; }
   function anyDropdownOpen() { return OPEN_DROPDOWNS.length > 0; }
-  function closeTopDropdown() { var handle = OPEN_DROPDOWNS[OPEN_DROPDOWNS.length - 1]; if (!handle) return false; OPEN_DROPDOWNS.pop(); try { handle.close(); } catch (e) {} return true; }
+  function closeTopDropdown() { var handle = OPEN_DROPDOWNS[OPEN_DROPDOWNS.length - 1]; if (!handle) return false; OPEN_DROPDOWNS.pop(); notifyDropdownSubs(); try { handle.close(); } catch (e) {} return true; }
 
   var KAPI = "/api/plugins/kanban";
   var TLAPI = "/api/plugins/tasklist";
@@ -961,10 +969,19 @@
     var anyPopupOpenRef = useRef(anyPopupOpen); anyPopupOpenRef.current = anyPopupOpen;
     // Tracks whether we currently hold a pushed sentinel history entry.
     var popupHistPushedRef = useRef(false);
-    // Push/keep a sentinel entry while at least one popup is open.
+    // Bumped whenever any custom dropdown opens/closes so the sentinel effect
+    // below re-evaluates. Dropdown open-state lives inside each DotSelect (not in
+    // this component's state), so without this the effect wouldn't re-run for a
+    // standalone dropdown opened outside a create/edit/detail popup.
+    s = useState(0); var dropdownTick = s[0], setDropdownTick = s[1];
+    useEffect(function () {
+      return subscribeDropdowns(function () { setDropdownTick(function (v) { return v + 1; }); });
+    }, []);
+    // Push/keep a sentinel entry while at least one popup (including any custom
+    // dropdown, which on mobile is a full-size modal) is open.
     useEffect(function () {
       if (typeof window === "undefined" || !window.history || !window.history.pushState) return;
-      var open = !!(modalId || creating || filePreview);
+      var open = !!(modalId || creating || filePreview || anyDropdownOpen());
       if (open && !popupHistPushedRef.current) {
         try { window.history.pushState({ tlPopup: true }, ""); popupHistPushedRef.current = true; } catch (e) {}
       } else if (!open && popupHistPushedRef.current) {
@@ -973,7 +990,7 @@
         popupHistPushedRef.current = false;
         try { window.history.back(); } catch (e) {}
       }
-    }, [modalId, creating, filePreview]);
+    }, [modalId, creating, filePreview, dropdownTick]);
     // Intercept Back presses: while a popup is open, close the top layer and,
     // if any layer remains, re-push a sentinel so the next Back keeps closing.
     useEffect(function () {
