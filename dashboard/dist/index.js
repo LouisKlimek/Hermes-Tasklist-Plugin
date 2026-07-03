@@ -742,9 +742,11 @@
       var color = LIST_COLORS[Math.floor(Math.random() * LIST_COLORS.length)];
       return send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { loadTreeFor(slug); return (r && r.list && r.list.id) || null; });
     }
-    function openCreate() {
+    function openCreate(presetStatus) {
       setNotice(null);
-      var init = { title: "", status: (settableStatuses.indexOf("todo") !== -1 ? "todo" : (settableStatuses[0] || "todo")), priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", files: [], parents: [], children: [] };
+      var defStatus = (settableStatuses.indexOf("todo") !== -1 ? "todo" : (settableStatuses[0] || "todo"));
+      var initStatus = (presetStatus && settableStatuses.indexOf(presetStatus) !== -1) ? presetStatus : defStatus;
+      var init = { title: "", status: initStatus, priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", files: [], parents: [], children: [] };
       draftInit.current = JSON.stringify(init);
       setDraft(init); setConfirmClose(false); setCreating(true);
     }
@@ -1326,12 +1328,7 @@
       var addInto = scope.type === "list" ? scope.id : ((scope.type === "all" || scope.type === "unassigned") ? null : undefined);
       var canAdd = addInto !== undefined && sec.status && (sec.status === "triage" || settableStatuses.indexOf(sec.status) !== -1);
       if (!canAdd) return null;
-      var open = addTaskSec === sec.key;
-      if (open) {
-        return h("div", { style: { display: "flex", gap: 8, padding: "8px 14px", borderTop: "1px solid " + borderC } },
-          h("input", { autoFocus: true, value: addTaskTitle, placeholder: "Task title\u2026", onChange: function (e) { setAddTaskTitle(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter") { addTask(addInto, sec.status, addTaskTitle); } if (e.key === "Escape") { setAddTaskSec(null); setAddTaskTitle(""); } }, onBlur: function () { if (addTaskTitle.trim()) addTask(addInto, sec.status, addTaskTitle); setAddTaskSec(null); }, className: "font-courier", style: { flex: "1 1 auto", background: "transparent", color: "inherit", border: "1px solid " + accent, borderRadius: 4, padding: "4px 8px", fontSize: 13 } }));
-      }
-      return h("div", { onClick: function () { setAddTaskSec(sec.key); setAddTaskTitle(""); }, style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderTop: "1px solid " + borderC, cursor: "pointer", fontSize: 12.5, color: muted }, onMouseEnter: function (e) { e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { e.currentTarget.style.background = "transparent"; } }, PlusIcon(13), "Add task");
+      return h("div", { onClick: function () { openCreate(sec.status); }, style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderTop: "1px solid " + borderC, cursor: "pointer", fontSize: 12.5, color: muted }, onMouseEnter: function (e) { e.currentTarget.style.background = bgMuted; }, onMouseLeave: function (e) { e.currentTarget.style.background = "transparent"; } }, PlusIcon(13), "Add task");
     }
 
     function sectionBlock(sec) {
