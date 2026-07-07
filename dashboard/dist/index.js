@@ -12,8 +12,8 @@
  *
  * Sidebar: every board is a collapsible folder; create lists inside it, click a
  * list to open it, drag a task row onto a list (or use the per-task List
- * dropdown) to move it. Empty status sections are hidden; To Do is always shown
- * so you can add tasks.
+ * dropdown) to move it. Empty status sections are hidden; To Do and Triage are
+ * always shown so you can add tasks and see the intake column.
  */
 (function () {
   "use strict";
@@ -1183,7 +1183,7 @@
         var cols = liveStatusOrder.filter(function (c) { return c !== "archived" || showArchived || scope.type === "archived"; });
         var byCol = {}; top.forEach(function (t) { (byCol[t.status] || (byCol[t.status] = [])).push(t); });
         var out = [];
-        cols.forEach(function (c) { var items = (byCol[c] || []).slice().sort(cmp); if (items.length || c === "todo") { var m = statusMeta(c); out.push({ key: c, label: m.label, dot: m.dot, items: items, status: c }); } });
+        cols.forEach(function (c) { var items = (byCol[c] || []).slice().sort(cmp); if (items.length || c === "todo" || c === "triage") { var m = statusMeta(c); out.push({ key: c, label: m.label, dot: m.dot, items: items, status: c }); } });
         return out;
       }
       function keyOf(t) { if (groupBy === "assignee") return t.assignee || "\u0000Unassigned"; if (groupBy === "priority") return "p:" + (t.priority == null ? 0 : t.priority); return "\u0000All"; }
