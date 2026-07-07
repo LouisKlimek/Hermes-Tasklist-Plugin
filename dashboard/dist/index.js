@@ -287,7 +287,15 @@
         + "@keyframes tl-blocked{0%,100%{opacity:1}50%{opacity:.2}}"
         + ".tl-blocked{animation:tl-blocked 1.05s ease-in-out infinite;filter:drop-shadow(0 0 3px #ef4444)}"
         + "@media (prefers-reduced-motion: reduce){.tl-gnode.in,.tl-gedge.in,.tl-gedge.flow,.tl-pulse,.tl-stage,.tl-blocked{animation:none!important}.tl-gnode{transition:none}}"
-        + ".tl-space,.tl-space *{cursor:grab!important}.tl-panning,.tl-panning *{cursor:grabbing!important}";
+        + ".tl-space,.tl-space *{cursor:grab!important}.tl-panning,.tl-panning *{cursor:grabbing!important}"
+        + ".tl-switch{position:relative;display:inline-block;width:34px;height:19px;flex:0 0 auto}"
+        + ".tl-switch input{position:absolute;opacity:0;width:0;height:0;margin:0}"
+        + ".tl-switch .tl-slider{position:absolute;inset:0;border-radius:19px;background:var(--border,#3a3a3a);transition:background .18s ease;cursor:pointer}"
+        + ".tl-switch .tl-slider::before{content:'';position:absolute;left:2px;top:2px;width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.35);transition:transform .18s ease}"
+        + ".tl-switch input:checked + .tl-slider{background:var(--primary,#6366f1)}"
+        + ".tl-switch input:checked + .tl-slider::before{transform:translateX(15px)}"
+        + ".tl-switch input:focus-visible + .tl-slider{box-shadow:0 0 0 2px var(--primary,#6366f1)}"
+        + "@media (prefers-reduced-motion: reduce){.tl-switch .tl-slider,.tl-switch .tl-slider::before{transition:none}}";
       document.head.appendChild(st);
     } catch (e) {}
   })();
@@ -1809,7 +1817,18 @@
     }, [view]);
 
     function graphView() {
-      if (!graphModel || !graphModel.ids.length) return h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : "No tasks to graph in this scope.");
+      var empty = !graphModel || !graphModel.ids.length;
+      // Standalone "Hide done chains" toggle so it stays reachable even when the
+      // filter (or an empty scope) leaves nothing to graph \u2014 otherwise ticking it
+      // would hide the whole toolbar and trap the user with no way to untick.
+      var hideDoneToggle = h("label", { title: "Hide tasks whose whole chain (itself, all parents and all children) is done", style: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, color: muted, cursor: "pointer", userSelect: "none" } },
+        h("span", { className: "tl-switch" }, h("input", { type: "checkbox", checked: hideDoneChains, onChange: function (e) { setHideDoneChains(e.target.checked); } }), h("span", { className: "tl-slider" })),
+        "Hide done chains");
+      if (empty) {
+        return h("div", null,
+          h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } }, hideDoneToggle),
+          h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : (hideDoneChains ? "No tasks to graph \u2014 every task in this scope is a fully-done chain. Turn off \u201cHide done chains\u201d to see them." : "No tasks to graph in this scope.")));
+      }
       function zBtn(lbl, fn, title) { return h("button", { onClick: fn, title: title, style: { background: bgMuted, color: "inherit", border: "1px solid " + borderC, borderRadius: 7, width: 30, height: 28, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" } }, lbl); }
       function legendDot(c, lbl) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: muted } }, h("span", { style: { width: 9, height: 9, borderRadius: 3, background: "transparent", border: "2px solid " + c } }), lbl); }
       var nBlk = blockedIds.length, curIdx = nBlk ? Math.min(blockNav, nBlk - 1) : 0;
@@ -1826,7 +1845,7 @@
         h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u26f6", graphFit, "Fit to screen"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
           blockNavEl),
-        h("label", { title: "Hide tasks whose whole chain (itself, all parents and all children) is done", style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted, cursor: "pointer" } }, h("input", { type: "checkbox", checked: hideDoneChains, onChange: function (e) { setHideDoneChains(e.target.checked); } }), "Hide done chains"),
+        hideDoneToggle,
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
         h("div", { ref: viewportRef, onMouseDown: onGraphDown, className: (panning ? "tl-panning" : (spaceHeld ? "tl-space" : "")), style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
