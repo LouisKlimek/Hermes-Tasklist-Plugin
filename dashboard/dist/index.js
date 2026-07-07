@@ -1640,7 +1640,7 @@
         for (var L = 1; L <= maxLevel; L++) { var a1 = byLevel[L]; if (a1 && a1.length) a1.sort(function (a, b) { var d = bary(par[a], idx) - bary(par[b], idx); return d !== 0 ? d : tcreated(a) - tcreated(b); }); idx = idxMap(); }
         for (var L2 = maxLevel - 1; L2 >= 0; L2--) { var a2 = byLevel[L2]; if (a2 && a2.length) a2.sort(function (a, b) { var d = bary(chi[a], idx) - bary(chi[b], idx); return d !== 0 ? d : tcreated(a) - tcreated(b); }); idx = idxMap(); }
       }
-      var NODE_W = 212, NODE_H = 58, HGAP = 88, VGAP = 22, PADX = 26, PADT = 46, PADB = 26;
+      var NODE_W = 212, NODE_H = 74, HGAP = 88, VGAP = 22, PADX = 26, PADT = 46, PADB = 26;
       var maxRows = 0; for (var L3 = 0; L3 <= maxLevel; L3++) { var ar = byLevel[L3] || []; if (ar.length > maxRows) maxRows = ar.length; }
       var totalH = maxRows * (NODE_H + VGAP) - VGAP; if (totalH < 0) totalH = 0;
       var pos = {}, ord = {}, oc = 0;
@@ -1686,17 +1686,31 @@
         var dm = statusMeta(t.status); var title = String(t.title || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "\u2026";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
         var rest = (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
+        // The status line can overflow the box (e.g. "To Do · waiting on a parent · 2 parents · 1 child").
+        // SVG text does not wrap, so estimate its width and, when it exceeds the available box width,
+        // push the parent/child counts onto a third line instead of running out of bounds.
+        var waiting = depBlk ? "  \u00b7  waiting on a parent" : "";
+        var metaAvail = NODE_W - 36 - 12;            // usable text width inside the box (px)
+        var metaCharW = 5.6;                          // ~avg glyph width at fontSize 10.5
+        var oneLine = dm.label + waiting + rest;
+        var wrapMeta = rest && (oneLine.length * metaCharW > metaAvail);
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
+        // Vertically center the text block: 2 lines when not wrapping, 3 lines when wrapping.
+        var titleY = wrapMeta ? NODE_H / 2 - 12 : NODE_H / 2 - 4;
+        var line2Y = titleY + 18;
+        var line3Y = line2Y + 15;
         return h("g", { key: id, transform: "translate(" + p.x + "," + p.y + ")" },
           h("g", { className: "tl-gnode" + (graphAnim ? " in" : ""), style: innerStyle, opacity: dim ? 0.32 : 1, onClick: function () { if (suppressClickRef.current || spaceRef.current) return; setModalId(id); }, onMouseEnter: function () { if (panningRef.current) return; setGraphHover(id); }, onMouseLeave: function () { if (panningRef.current) return; setGraphHover(null); } },
             h("rect", { width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: cardBg, stroke: hov ? accent : borderC, strokeWidth: hov ? 2.2 : 1.3 }),
             isBlocked ? h("rect", { className: "tl-blocked", width: NODE_W, height: NODE_H, rx: 11, ry: 11, fill: "none", stroke: BLOCK_COL, strokeWidth: 2.6 }) : null,
             h("circle", { cx: 21, cy: NODE_H / 2, r: 5, fill: dm.dot }),
-            h("text", { x: 36, y: NODE_H / 2 - 4, fill: fg, fontSize: 13, fontWeight: 600 }, title),
-            h("text", { x: 36, y: NODE_H / 2 + 14, fontSize: 10.5 },
+            h("text", { x: 36, y: titleY, fill: fg, fontSize: 13, fontWeight: 600 }, title),
+            h("text", { x: 36, y: line2Y, fontSize: 10.5 },
               h("tspan", { fill: dm.dot, fontWeight: 600 }, dm.label),
               depBlk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, "  \u00b7  waiting on a parent") : null,
-              rest ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null)));
+              (rest && !wrapMeta) ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null),
+            wrapMeta ? h("text", { x: 36, y: line3Y, fontSize: 10.5 },
+              h("tspan", { fill: "currentColor", opacity: 0.55 }, rest.replace(/^\s*\u00b7\s*/, ""))) : null));
       });
       return h("svg", { width: gm.W, height: gm.H, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
         h("defs", null,
