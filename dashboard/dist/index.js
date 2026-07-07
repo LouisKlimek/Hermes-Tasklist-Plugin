@@ -1483,7 +1483,7 @@
       var wl = workerLog[id];
       var wlRight = h("button", { onClick: function () { loadWorkerLog(id); }, style: { background: "transparent", border: "none", color: accent, cursor: "pointer", fontSize: 12 } }, wl ? "refresh" : "load");
       var wlBody = wl
-        ? (wl.loading ? muteSpan("Loading\u2026") : (wl.content ? h("pre", { style: { margin: 0, maxHeight: 260, overflow: "auto", background: bgMuted, border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 11.5, fontFamily: "var(--font-courier, monospace)", whiteSpace: "pre-wrap" } }, wl.content) : muteSpan(wl.error ? "\u2014 could not load worker log \u2014" : "\u2014 no worker log yet \u2014")))
+        ? (wl.loading ? muteSpan("Loading\u2026") : (wl.content ? h("pre", { ref: function (el) { if (el) el.scrollTop = el.scrollHeight; }, style: { margin: 0, maxHeight: 260, overflow: "auto", background: bgMuted, border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 11.5, fontFamily: "var(--font-courier, monospace)", whiteSpace: "pre-wrap" } }, wl.content) : muteSpan(wl.error ? "\u2014 could not load worker log \u2014" : "\u2014 no worker log yet \u2014")))
         : muteSpan("Click \u201cload\u201d to fetch the worker log.");
       L.push(h("div", { key: "wl" }, section("Worker log", wlRight, wlBody)));
 
