@@ -46,7 +46,7 @@
 
   var KAPI = "/api/plugins/kanban";
   var TLAPI = "/api/plugins/tasklist";
-  var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy", LS_VIEW = "tasklist.view";
+  var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy", LS_VIEW = "tasklist.view", LS_HIDE_DONE_CHAINS = "tasklist.hideDoneChains";
   var POLL_MS = 4000;
 
   var STATUS_ORDER = ["triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done", "archived"];
@@ -483,6 +483,7 @@
     s = useState(1); var graphZoom = s[0], setGraphZoom = s[1];
     s = useState(null); var graphHover = s[0], setGraphHover = s[1];
     s = useState(false); var graphAnim = s[0], setGraphAnim = s[1];   // brief entrance-animation window
+    s = useState(rd(LS_HIDE_DONE_CHAINS, "0") === "1"); var hideDoneChains = s[0], setHideDoneChains = s[1];   // graph: hide fully-done chains
     s = useState(0); var colorV = s[0], setColorV = s[1];   // bumps when live Kanban colors are read
     useEffect(function () {
       var cancelled = false;
@@ -617,6 +618,7 @@
 
     useEffect(function () { try { localStorage.setItem(LS_GROUPBY, groupBy); } catch (e) {} }, [groupBy]);
     useEffect(function () { try { localStorage.setItem(LS_VIEW, view); } catch (e) {} }, [view]);
+    useEffect(function () { try { localStorage.setItem(LS_HIDE_DONE_CHAINS, hideDoneChains ? "1" : "0"); } catch (e) {} }, [hideDoneChains]);
     useEffect(function () { try { if (board) localStorage.setItem(LS_BOARD, board); } catch (e) {} }, [board]);
     useEffect(function () { try { localStorage.setItem(LS_SCOPE, JSON.stringify(scope)); } catch (e) {} }, [scope]);
 
@@ -1595,6 +1597,28 @@
       var idset = {}; list.forEach(function (t) { idset[t.id] = 1; });
       var par = {}, chi = {}; list.forEach(function (t) { par[t.id] = []; chi[t.id] = []; });
       list.forEach(function (t) { (edges.parents[t.id] || []).forEach(function (pid) { if (idset[pid] && par[t.id].indexOf(pid) === -1) { par[t.id].push(pid); chi[pid].push(t.id); } }); });
+      // "Done chains": a task whose own status is done AND every ancestor and
+      // every descendant (within this graph) is also done. Such fully-done
+      // clusters aren't interesting to look at, so this toggle hides them.
+      if (hideDoneChains) {
+        var isDone = function (id) { var t = taskById[id]; return !!t && t.status === "done"; };
+        function closure(start, adj) { var out = {}, st = (adj[start] || []).slice(); while (st.length) { var x = st.pop(); if (out[x]) continue; out[x] = 1; (adj[x] || []).forEach(function (n) { st.push(n); }); } return out; }
+        var doneChain = {};
+        list.forEach(function (t) {
+          if (!isDone(t.id)) return;
+          var anc = closure(t.id, par), des = closure(t.id, chi), ok = true;
+          Object.keys(anc).forEach(function (k) { if (!isDone(k)) ok = false; });
+          Object.keys(des).forEach(function (k) { if (!isDone(k)) ok = false; });
+          if (ok) doneChain[t.id] = 1;
+        });
+        var kept = list.filter(function (t) { return !doneChain[t.id]; });
+        if (kept.length !== list.length) {
+          list = kept;
+          idset = {}; list.forEach(function (t) { idset[t.id] = 1; });
+          par = {}; chi = {}; list.forEach(function (t) { par[t.id] = []; chi[t.id] = []; });
+          list.forEach(function (t) { (edges.parents[t.id] || []).forEach(function (pid) { if (idset[pid] && par[t.id].indexOf(pid) === -1) { par[t.id].push(pid); chi[pid].push(t.id); } }); });
+        }
+      }
       var level = {}, TEMP = {};
       function lvl(id) { if (level[id] !== undefined) return level[id]; if (TEMP[id]) return 0; TEMP[id] = 1; var m = -1; par[id].forEach(function (p) { var l = lvl(p); if (l > m) m = l; }); TEMP[id] = 0; level[id] = m + 1; return level[id]; }
       list.forEach(function (t) { lvl(t.id); });
@@ -1617,7 +1641,7 @@
       var H = PADT + PADB + totalH; if (H < PADT + PADB + NODE_H) H = PADT + PADB + NODE_H;
       var elist = []; list.forEach(function (t) { chi[t.id].forEach(function (cid) { elist.push({ from: t.id, to: cid }); }); });
       return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
-    }, [view, scopeTasks, edges, showArchived, taskById]);
+    }, [view, scopeTasks, edges, showArchived, taskById, hideDoneChains]);
 
     // SVG is memoised so pan/zoom (which only transform the wrapper) never re-render the nodes.
     var graphSvg = useMemo(function () {
@@ -1802,6 +1826,7 @@
         h("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, zBtn("\u2212", function () { graphZoomButton(1 / 1.2); }, "Zoom out"), h("span", { style: { fontSize: 11.5, color: muted, minWidth: 38, textAlign: "center" } }, Math.round(graphZoom * 100) + "%"), zBtn("+", function () { graphZoomButton(1.2); }, "Zoom in"), zBtn("\u26f6", graphFit, "Fit to screen"), zBtn("\u21ba", function () { setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }, "Reset view")),
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
           blockNavEl),
+        h("label", { title: "Hide tasks whose whole chain (itself, all parents and all children) is done", style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: muted, cursor: "pointer" } }, h("input", { type: "checkbox", checked: hideDoneChains, onChange: function (e) { setHideDoneChains(e.target.checked); } }), "Hide done chains"),
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
         h("div", { ref: viewportRef, onMouseDown: onGraphDown, className: (panning ? "tl-panning" : (spaceHeld ? "tl-space" : "")), style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
