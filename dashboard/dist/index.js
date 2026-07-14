@@ -100,18 +100,7 @@
   function hsize(n) { if (n == null) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function fmtPayload(p) { if (p == null || p === "") return ""; var str; try { str = typeof p === "string" ? p : JSON.stringify(p); } catch (e) { str = String(p); } return str; }
   function fmtBytes(n) { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
-  // The Kanban title records the list at creation time; TaskList keeps that
-  // implementation detail out of its own UI. A suffix is recognized only with
-  // the task's current list name, never by a generic bracket pattern.
-  function suffixForList(listName) { return listName ? " [" + listName + "]" : ""; }
-  function canonicalListTitle(title, listName) {
-    var suffix = suffixForList(listName);
-    return suffix && String(title).slice(-suffix.length) !== suffix ? String(title) + suffix : String(title);
-  }
-  function displayListTitle(title, listName) {
-    var value = String(title || ""), suffix = suffixForList(listName);
-    return suffix && value.slice(-suffix.length) === suffix ? value.slice(0, -suffix.length) : value;
-  }
+
   function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
   function isFilePath(p) { return /\.[A-Za-z0-9]{1,8}$/.test(String(p).split("/").pop()); }
 
@@ -717,9 +706,10 @@
     var activeLists = (treeFor(board).lists) || [];
     var activeMembership = (treeFor(board).membership) || {};
     var liveListIds = useMemo(function () { var m = {}; activeLists.forEach(function (l) { m[l.id] = 1; }); return m; }, [activeLists]);
-    function listNameForTask(t) { var lid = t && activeMembership[t.id]; var list = activeLists.filter(function (x) { return x.id === lid; })[0]; return list ? list.name : ""; }
-    function taskTitle(t) { return displayListTitle(t && t.title, listNameForTask(t)); }
-    function canonicalTaskTitle(title, listId) { var list = activeLists.filter(function (x) { return x.id === listId; })[0]; return canonicalListTitle(title, list ? list.name : ""); }
+    // List membership is already canonical structured data. Do not encode it in
+    // the shared Kanban title: a matching trailing string may be user-authored
+    // and list renames would make the embedded value stale.
+    function taskTitle(t) { return String((t && t.title) || ""); }
 
     var assignees = (data && data.assignees) || [];
     var assigneeChoices = (asgOpts && asgOpts.length) ? asgOpts : assignees;
@@ -736,11 +726,14 @@
         .catch(function () { setDetail(function (m) { var n = Object.assign({}, m); n[id] = { _error: true }; return n; }); });
     }, [bq, detail]);
     useEffect(function () { if (modalId) { loadDetail(modalId, true); loadWorkerLog(modalId); } }, [modalId]); // eslint-disable-line
+    var modalTask = modalId ? taskById[modalId] : null;
     useEffect(function () {
+      // The task list can arrive after a deeplink opens the modal. Re-run when
+      // this task's data arrives so the editable draft never remains stale.
       if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? taskTitle(t) : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
       function onKey(e) { if (e.key === "Escape") { if (filePreviewRef.current) { if (filePreviewStackRef.current && filePreviewStackRef.current.length) backFilePreview(); else closeFilePreview(); } else setModalId(null); } }
       window.addEventListener("keydown", onKey); return function () { window.removeEventListener("keydown", onKey); };
-    }, [modalId]); // eslint-disable-line
+    }, [modalId, modalTask && modalTask.title]); // eslint-disable-line
 
     // ---- task edits ---------------------------------------------------------
     var applyEdit = useCallback(function (t, body, label) {
@@ -751,7 +744,7 @@
     function setStatus(t, v) { if (v !== t.status) applyEdit(t, { status: v }, "status"); }
     function setPriority(t, v) { var n = parseInt(v, 10); if (n !== (t.priority == null ? 0 : t.priority)) applyEdit(t, { priority: n }, "priority"); }
     function setAssignee(t, v) { if ((v || "") !== (t.assignee || "")) applyEdit(t, { assignee: v }, "assignee"); }
-    function saveTitle(t) { var v = titleDraft.trim(); var canonical = canonicalTaskTitle(v, activeMembership[t.id]); if (!v || canonical === (t.title || "")) return; applyEdit(t, { title: canonical }, "title"); }
+    function saveTitle(t) { var v = titleDraft.trim(); if (!v || v === (t.title || "")) return; applyEdit(t, { title: v }, "title"); }
 
     // ---- list / membership mutations ----------------------------------------
     function activate(slug, sc) { setBoard(slug); setScope(sc); setCollapsedBoards(function (n) { var x = Object.assign({}, n); x[slug] = false; return x; }); if (isNarrow) setSidebarOpen(false); }
@@ -762,7 +755,7 @@
     function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }); }); }); chain.then(function () { loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
     function addTask(listId, status, title) {
       title = (title || "").trim(); if (!title) return; setNotice(null);
-      send("POST", KAPI + "/tasks" + bq(), { title: canonicalTaskTitle(title, listId), triage: status === "triage" }).then(function (r) {
+      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: status === "triage" }).then(function (r) {
         var id = r && r.task && r.task.id; var p = Promise.resolve();
         if (id && listId) p = send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: listId });
         if (id && status && status !== "triage" && settableStatuses.indexOf(status) !== -1) p = p.then(function () { return send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { status: status }); });
@@ -796,7 +789,7 @@
       setSavingNew(true); setNotice(null);
       var d = draft;
       var tp = KAPI + "/tasks/";
-      send("POST", KAPI + "/tasks" + bq(), { title: canonicalTaskTitle(title, d.list_id), triage: false }).then(function (r) {
+      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: false }).then(function (r) {
         var id = (r && ((r.task && r.task.id) || r.id || r.task_id || r.taskId)) || null;
         if (!id) return; // task created but id not in response shape -> still close+reload below
         var chain = Promise.resolve();

@@ -5,21 +5,20 @@ const fs = require("fs");
 const path = require("path");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "dashboard", "dist", "index.js"), "utf8");
-const helpers = source.match(/function suffixForList\([\s\S]*?\n  }\n  function displayListTitle\([\s\S]*?\n  }/);
-assert(helpers, "title suffix helpers must be present in the dashboard bundle");
-assert(source.includes("canonicalTaskTitle(title, listId)"), "inline list creation must persist the canonical title");
-assert(source.includes("canonicalTaskTitle(title, d.list_id)"), "new-task modal list creation must persist the canonical title");
-eval(`${helpers[0]}\n;globalThis.__titleHelpers = { canonicalListTitle, displayListTitle };`);
+// A manually authored suffix is ordinary title text, never generated metadata.
+assert(source.includes('function taskTitle(t) { return String((t && t.title) || ""); }'),
+  "TaskList must render the stored title verbatim, including user-authored suffixes");
 
-const { canonicalListTitle, displayListTitle } = globalThis.__titleHelpers;
+// List renames only change membership data; the stored title remains untouched.
+assert(source.includes("List membership is already canonical structured data"),
+  "list membership must not be reconciled through the shared task title");
 
-const list = "Research & Design [Q3]";
-const canonical = canonicalListTitle("Draft brief [customer note]", list);
-assert.strictEqual(canonical, "Draft brief [customer note] [Research & Design [Q3]]");
-assert.strictEqual(canonicalListTitle(canonical, list), canonical, "retry must not duplicate suffix");
-assert.strictEqual(displayListTitle(canonical, list), "Draft brief [customer note]", "TaskList display hides only its list suffix");
-assert.strictEqual(displayListTitle("Draft brief [customer note]", list), "Draft brief [customer note]", "user bracket text is preserved");
-assert.strictEqual(canonicalListTitle("Outside task [customer note]", ""), "Outside task [customer note]", "non-list creation stays unchanged");
-assert.strictEqual(displayListTitle("Outside task [Research & Design [Q3]]", ""), "Outside task [Research & Design [Q3]]", "without matching list context no text is stripped");
+// Both creation paths submit the exact entered title, not a list-derived suffix.
+assert(source.includes('{ title: title, triage: status === "triage" }'), "inline list creation must preserve the entered title");
+assert(source.includes('{ title: title, triage: false }'), "new-task modal creation must preserve the entered title");
+assert(!source.includes("canonicalTaskTitle"), "no title suffix reconciliation may mutate shared task titles");
 
-console.log("title suffix contract: 6 assertions passed");
+// The detail draft is initialized again when async task data for the open modal arrives.
+assert(source.includes("[modalId, modalTask && modalTask.title]"), "detail title initialization must depend on loaded task data");
+
+console.log("title semantics contract: 6 assertions passed");
