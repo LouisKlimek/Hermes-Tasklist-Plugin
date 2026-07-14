@@ -71,6 +71,15 @@ def _conn() -> sqlite3.Connection:
         "  PRIMARY KEY (board, task_id))"
     )
     c.execute(
+        "CREATE TABLE IF NOT EXISTS title_provenance ("
+        "  board TEXT NOT NULL DEFAULT 'default',"
+        "  task_id TEXT NOT NULL,"
+        "  list_id TEXT,"
+        "  generated_suffix TEXT NOT NULL,"
+        "  updated_at INTEGER NOT NULL,"
+        "  PRIMARY KEY (board, task_id))"
+    )
+    c.execute(
         "CREATE TABLE IF NOT EXISTS path_cache ("
         "  cand TEXT PRIMARY KEY,"          # the path string as written in text
         "  state TEXT NOT NULL,"            # 'valid' | 'invalid'
@@ -122,6 +131,12 @@ class MembershipBody(BaseModel):
     list_id: Optional[str] = None  # None / "" => remove from any list
 
 
+class TitleProvenanceBody(BaseModel):
+    task_id: str
+    list_id: Optional[str] = None
+    generated_suffix: Optional[str] = None
+
+
 # --------------------------------------------------------------------------- #
 # routes  (mounted at /api/plugins/tasklist/)
 # --------------------------------------------------------------------------- #
@@ -145,7 +160,13 @@ def get_lists(board: Optional[str] = Query(None)):
                 "SELECT task_id, list_id FROM membership WHERE board=?", (b,)
             )
         }
-        return {"lists": lists, "membership": membership}
+        title_provenance = {
+            r["task_id"]: {"list_id": r["list_id"], "generated_suffix": r["generated_suffix"]}
+            for r in c.execute(
+                "SELECT task_id, list_id, generated_suffix FROM title_provenance WHERE board=?", (b,)
+            )
+        }
+        return {"lists": lists, "membership": membership, "title_provenance": title_provenance}
     finally:
         c.close()
 
@@ -271,6 +292,30 @@ def set_membership(body: MembershipBody, board: Optional[str] = Query(None)):
             c.execute(
                 "DELETE FROM membership WHERE board=? AND task_id=?", (b, body.task_id)
             )
+        c.commit()
+        return {"ok": True}
+    finally:
+        c.close()
+
+
+@router.put("/title-provenance")
+def set_title_provenance(body: TitleProvenanceBody, board: Optional[str] = Query(None)):
+    """Record the exact TaskList-generated suffix for a task, or clear it."""
+    if not body.task_id:
+        raise HTTPException(status_code=400, detail="task_id required")
+    b = _board(board)
+    c = _conn()
+    try:
+        suffix = body.generated_suffix or ""
+        if suffix:
+            c.execute(
+                "INSERT INTO title_provenance (board, task_id, list_id, generated_suffix, updated_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(board, task_id) DO UPDATE SET "
+                "list_id=excluded.list_id, generated_suffix=excluded.generated_suffix, updated_at=excluded.updated_at",
+                (b, body.task_id, body.list_id or None, suffix, int(time.time())),
+            )
+        else:
+            c.execute("DELETE FROM title_provenance WHERE board=? AND task_id=?", (b, body.task_id))
         c.commit()
         return {"ok": True}
     finally:

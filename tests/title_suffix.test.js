@@ -5,20 +5,31 @@ const fs = require("fs");
 const path = require("path");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "dashboard", "dist", "index.js"), "utf8");
-// A manually authored suffix is ordinary title text, never generated metadata.
-assert(source.includes('function taskTitle(t) { return String((t && t.title) || ""); }'),
-  "TaskList must render the stored title verbatim, including user-authored suffixes");
+const helpers = source.match(/function suffixForList\([\s\S]*?\n  }\n  function displayListTitle\([\s\S]*?\n  }/);
+assert(helpers, "title suffix helpers must be present in the dashboard bundle");
+assert(source.includes("title_provenance"), "list responses must include explicit title provenance");
+assert(source.includes("setTitleProvenance(id, listId)"), "inline list creation must persist title provenance");
+assert(source.includes("setTitleProvenance(id, d.list_id)"), "new-task modal creation must persist title provenance");
+eval(`${helpers[0]}\n;globalThis.__titleHelpers = { canonicalListTitle, displayListTitle };`);
 
-// List renames only change membership data; the stored title remains untouched.
-assert(source.includes("List membership is already canonical structured data"),
-  "list membership must not be reconciled through the shared task title");
+const { canonicalListTitle, displayListTitle } = globalThis.__titleHelpers;
+const list = "Research & Design [Q3]";
+const provenance = { list_id: "list-a", generated_suffix: " [Research & Design [Q3]]" };
+const canonical = canonicalListTitle("Draft brief [customer note]", list, null);
+assert.strictEqual(canonical, "Draft brief [customer note] [Research & Design [Q3]]");
+assert.strictEqual(canonicalListTitle(canonical, list, provenance), canonical, "retry removes only the recorded suffix");
+assert.strictEqual(displayListTitle(canonical, provenance), "Draft brief [customer note]", "TaskList hides its recorded suffix");
+assert.strictEqual(displayListTitle("Draft brief [customer note] [Research & Design [Q3]]", null), "Draft brief [customer note] [Research & Design [Q3]]", "manual matching suffix stays visible");
 
-// Both creation paths submit the exact entered title, not a list-derived suffix.
-assert(source.includes('{ title: title, triage: status === "triage" }'), "inline list creation must preserve the entered title");
-assert(source.includes('{ title: title, triage: false }'), "new-task modal creation must preserve the entered title");
-assert(!source.includes("canonicalTaskTitle"), "no title suffix reconciliation may mutate shared task titles");
+const renamed = canonicalListTitle(canonical, "Planning", provenance);
+assert.strictEqual(renamed, "Draft brief [customer note] [Planning]", "rename replaces only the original generated suffix");
+const renamedProvenance = { list_id: "list-a", generated_suffix: " [Planning]" };
+assert.strictEqual(canonicalListTitle("Draft brief [customer note] revised", "Planning", renamedProvenance), "Draft brief [customer note] revised [Planning]", "later title edit keeps only the current generated suffix");
 
-// The detail draft is initialized again when async task data for the open modal arrives.
-assert(source.includes("[modalId, modalTask && modalTask.title]"), "detail title initialization must depend on loaded task data");
+const moved = canonicalListTitle(renamed, "Shipping", renamedProvenance);
+assert.strictEqual(moved, "Draft brief [customer note] [Shipping]", "move replaces generated suffix without retaining obsolete text");
+assert.strictEqual(displayListTitle(moved, { list_id: "list-b", generated_suffix: " [Shipping]" }), "Draft brief [customer note]", "moved task display has no obsolete suffix");
+assert(source.includes("titleDraftRef.current === titleDraftSourceRef.current"), "delayed list data refreshes an untouched draft only");
+assert(source.includes("[modalId, taskById, activeMembership, activeLists, activeTitleProvenance]"), "draft refresh reacts to delayed membership/list data");
 
-console.log("title semantics contract: 6 assertions passed");
+console.log("title suffix provenance contract: 11 assertions passed");
