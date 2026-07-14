@@ -261,6 +261,7 @@ def delete_list(list_id: str, board: Optional[str] = Query(None)):
         affected = list(c.execute(
             "SELECT p.task_id, p.generated_suffix FROM membership AS m "
             "JOIN title_provenance AS p ON p.board=m.board AND p.task_id=m.task_id "
+            "AND p.list_id=m.list_id "
             "WHERE m.board=? AND m.list_id=?",
             (b, list_id),
         ))
@@ -281,9 +282,9 @@ def delete_list(list_id: str, board: Optional[str] = Query(None)):
                     (suffix, task["task_id"], suffix, suffix),
                 )
         c.execute(
-            "DELETE FROM title_provenance WHERE board=? AND task_id IN "
+            "DELETE FROM title_provenance WHERE board=? AND list_id=? AND task_id IN "
             "(SELECT task_id FROM membership WHERE board=? AND list_id=?)",
-            (b, b, list_id),
+            (b, list_id, b, list_id),
         )
         c.execute("DELETE FROM membership WHERE board=? AND list_id=?", (b, list_id))
         cur = c.execute("DELETE FROM lists WHERE id=? AND board=?", (list_id, b))

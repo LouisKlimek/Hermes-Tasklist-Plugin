@@ -89,19 +89,40 @@ def test_deletion_rolls_back_when_legacy_kanban_schema_cannot_reconcile() -> Non
         assert state(home, list_id) == (1, 1, 1)
 
 
+def test_deletion_preserves_provenance_for_another_list() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        os.environ["HERMES_HOME"] = str(home)
+        kanban, deleted_list_id = seed(home, "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
+        retained_list_id = api.create_list(api.ListCreate(name="Other"), board="board-a")["list"]["id"]
+        with sqlite3.connect(kanban) as c:
+            c.execute("UPDATE tasks SET title='Draft brief [Other]' WHERE id='task-1'")
+        api.set_title_provenance(
+            api.TitleProvenanceBody(task_id="task-1", list_id=retained_list_id, generated_suffix=" [Other]"),
+            board="board-a",
+        )
+        assert api.delete_list(deleted_list_id, board="board-a") == {"ok": True}
+        with sqlite3.connect(kanban) as c:
+            assert c.execute("SELECT title FROM tasks WHERE id='task-1'").fetchone()[0] == "Draft brief [Other]"
+        listing = api.get_lists(board="board-a")
+        assert listing["membership"] == {}
+        assert listing["title_provenance"]["task-1"]["list_id"] == retained_list_id
+
+
 def main() -> None:
     original_home = os.environ.get("HERMES_HOME")
     original_path = api._kanban_db_path
     try:
         test_deletion_restores_title_and_clears_metadata()
         test_deletion_rolls_back_when_legacy_kanban_schema_cannot_reconcile()
+        test_deletion_preserves_provenance_for_another_list()
     finally:
         api._kanban_db_path = original_path
         if original_home is None:
             os.environ.pop("HERMES_HOME", None)
         else:
             os.environ["HERMES_HOME"] = original_home
-    print("delete list reconciliation: 2 assertions passed")
+    print("delete list reconciliation: 3 scenarios passed")
 
 
 if __name__ == "__main__":
