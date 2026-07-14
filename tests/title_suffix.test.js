@@ -10,6 +10,14 @@ assert(helpers, "title suffix helpers must be present in the dashboard bundle");
 assert(source.includes("title_provenance"), "list responses must include explicit title provenance");
 assert(source.includes("setTitleProvenance(id, listId)"), "inline list creation must persist title provenance");
 assert(source.includes("setTitleProvenance(id, d.list_id)"), "new-task modal creation must persist title provenance");
+const moveToList = source.match(/function moveToList\([\s\S]*?\n    function addTask/);
+const addTask = source.match(/function addTask\([\s\S]*?\n    }\n\n    function createListReturning/);
+const submitCreate = source.match(/function submitCreate\([\s\S]*?\n    }\n\n    \/\/ ---- \"Create follow-up/);
+assert(moveToList && addTask && submitCreate, "list placement mutation functions must be present");
+assert(moveToList[0].indexOf('"/membership"') < moveToList[0].indexOf('"list move"'), "moves must save membership before changing the title");
+assert(addTask[0].indexOf('"/membership"') < addTask[0].indexOf('setTitleProvenance(id, listId)'), "quick creation must save membership before provenance");
+assert(submitCreate[0].indexOf('"/membership"') < submitCreate[0].indexOf('setTitleProvenance(id, d.list_id)'), "modal creation must save membership before provenance");
+assert(/if \(d\.list_id\) chain = chain\.then\(function \(\) \{ return send\("PUT", TLAPI \+ "\/membership"[\s\S]*?\}\);\n        chain = chain\.then\(function \(\) \{ var canonical = canonicalTaskTitle\(title, d\.list_id\);[\s\S]*?setTitleProvenance\(id, d\.list_id\)/.test(submitCreate[0]), "a failed modal membership request must stop title/provenance updates before the title/provenance chain runs");
 eval(`${helpers[0]}\n;globalThis.__titleHelpers = { canonicalListTitle, displayListTitle };`);
 
 const { canonicalListTitle, displayListTitle } = globalThis.__titleHelpers;
@@ -32,4 +40,4 @@ assert.strictEqual(displayListTitle(moved, { list_id: "list-b", generated_suffix
 assert(source.includes("titleDraftRef.current === titleDraftSourceRef.current"), "delayed list data refreshes an untouched draft only");
 assert(source.includes("[modalId, taskById, activeMembership, activeLists, activeTitleProvenance]"), "draft refresh reacts to delayed membership/list data");
 
-console.log("title suffix provenance contract: 11 assertions passed");
+console.log("title suffix provenance contract: 16 assertions passed");

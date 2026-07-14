@@ -771,13 +771,13 @@
     function createList(name, slug) { name = (name || "").trim(); if (!name) return; var color = LIST_COLORS[Math.floor(Math.random() * LIST_COLORS.length)]; send("POST", TLAPI + "/lists" + tlq(slug), { name: name, color: color }).then(function (r) { setAdding(null); setAddName(""); loadTreeFor(slug); if (r && r.list) activate(slug, { type: "list", id: r.list.id }); }).catch(function (e) { setNotice("Could not create list: " + ((e && e.message) || "error")); }); }
     function renameNode() { if (!editing) return; var nm = editName.trim(); var cur = editing; setEditing(null); if (!nm) return; send("PATCH", TLAPI + "/lists/" + encodeURIComponent(cur.id) + tlq(cur.board), { name: nm }).then(function () { var chain = Promise.resolve(); tasks.forEach(function (t) { var p = provenanceForTask(t); if (!p || p.list_id !== cur.id) return; var title = canonicalListTitle(t.title, nm, p); chain = chain.then(function () { return applyEdit(t, { title: title }, "list rename"); }).then(function (ok) { return ok ? send("PUT", TLAPI + "/title-provenance" + tlq(cur.board), { task_id: t.id, list_id: cur.id, generated_suffix: suffixForList(nm) }) : null; }); }); return chain; }).then(function () { load(true); loadTreeFor(cur.board); }).catch(function () { loadTreeFor(cur.board); }); }
     function deleteList(l, slug) { setConfirmDelList(null); send("DELETE", TLAPI + "/lists/" + encodeURIComponent(l.id) + tlq(slug), null).then(function () { if (scope.type === "list" && scope.id === l.id) setScope({ type: "all" }); loadTreeFor(slug); }).catch(function () { loadTreeFor(slug); }); }
-    function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { var t = taskById[tid], title = t ? canonicalTaskTitle(t.title, listId, provenanceForTask(t)) : null; return (t && title !== t.title ? applyEdit(t, { title: title }, "list move") : Promise.resolve(true)).then(function (ok) { if (!ok) return null; return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }).then(function () { return setTitleProvenance(tid, listId); }); }); }); }); chain.then(function () { load(true); loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
+    function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }).then(function () { var t = taskById[tid], title = t ? canonicalTaskTitle(t.title, listId, provenanceForTask(t)) : null; return (t && title !== t.title ? applyEdit(t, { title: title }, "list move") : Promise.resolve(true)).then(function (ok) { return ok ? setTitleProvenance(tid, listId) : null; }); }); }); }); chain.then(function () { load(true); loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
     function addTask(listId, status, title) {
       title = (title || "").trim(); if (!title) return; setNotice(null);
-      send("POST", KAPI + "/tasks" + bq(), { title: canonicalTaskTitle(title, listId), triage: status === "triage" }).then(function (r) {
+      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: status === "triage" }).then(function (r) {
         var id = r && r.task && r.task.id; var p = Promise.resolve();
-        if (id) p = p.then(function () { return setTitleProvenance(id, listId); });
         if (id && listId) p = p.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: listId }); });
+        if (id) p = p.then(function () { var canonical = canonicalTaskTitle(title, listId); return canonical !== title ? send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { title: canonical }) : null; }).then(function () { return setTitleProvenance(id, listId); });
         if (id && status && status !== "triage" && settableStatuses.indexOf(status) !== -1) p = p.then(function () { return send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { status: status }); });
         return p;
       }).then(function () { setAddTaskTitle(""); load(true); loadTreeFor(board); }).catch(function (e) { setNotice("Could not add task: " + ((e && e.message) || "error")); load(true); loadTreeFor(board); });
@@ -809,15 +809,17 @@
       setSavingNew(true); setNotice(null);
       var d = draft;
       var tp = KAPI + "/tasks/";
-      send("POST", KAPI + "/tasks" + bq(), { title: canonicalTaskTitle(title, d.list_id), triage: false }).then(function (r) {
+      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: false }).then(function (r) {
         var id = (r && ((r.task && r.task.id) || r.id || r.task_id || r.taskId)) || null;
         if (!id) return; // task created but id not in response shape -> still close+reload below
-        var chain = setTitleProvenance(id, d.list_id);
+        var chain = Promise.resolve();
+        if (d.list_id) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: d.list_id }); });
+        chain = chain.then(function () { var canonical = canonicalTaskTitle(title, d.list_id); return canonical !== title ? send("PATCH", tp + encodeURIComponent(id) + bq(), { title: canonical }) : null; }).then(function () { return setTitleProvenance(id, d.list_id); });
         if (d.status && d.status !== "triage" && settableStatuses.indexOf(d.status) !== -1) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { status: d.status }); }).catch(function () {});
         var pr = parseInt(d.priority, 10); if (!isNaN(pr)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { priority: pr }); }).catch(function () {});
         if (d.assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { assignee: d.assignee }); }).catch(function () {});
         if (d.body && d.body.trim()) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { body: d.body }); }).catch(function () {});
-        if (d.list_id) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: d.list_id }); }).catch(function () {});
+
         if (d.files && d.files.length) { d.files.forEach(function (f) { chain = chain.then(function () { var fd = new FormData(); fd.append("file", f); return authFetch(KAPI + "/tasks/" + encodeURIComponent(id) + "/attachments" + bq(), { method: "POST", body: fd }); }).catch(function () {}); }); }
         if (d.parents && d.parents.length) { d.parents.forEach(function (pid) { chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: pid, child_id: id }); }).catch(function () {}); }); }
         if (d.children && d.children.length) { d.children.forEach(function (cid) { chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: id, child_id: cid }); }).catch(function () {}); }); }
