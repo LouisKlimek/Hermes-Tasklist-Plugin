@@ -100,6 +100,18 @@
   function hsize(n) { if (n == null) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function fmtPayload(p) { if (p == null || p === "") return ""; var str; try { str = typeof p === "string" ? p : JSON.stringify(p); } catch (e) { str = String(p); } return str; }
   function fmtBytes(n) { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
+  // The Kanban title records the list at creation time; TaskList keeps that
+  // implementation detail out of its own UI. A suffix is recognized only with
+  // the task's current list name, never by a generic bracket pattern.
+  function suffixForList(listName) { return listName ? " [" + listName + "]" : ""; }
+  function canonicalListTitle(title, listName) {
+    var suffix = suffixForList(listName);
+    return suffix && String(title).slice(-suffix.length) !== suffix ? String(title) + suffix : String(title);
+  }
+  function displayListTitle(title, listName) {
+    var value = String(title || ""), suffix = suffixForList(listName);
+    return suffix && value.slice(-suffix.length) === suffix ? value.slice(0, -suffix.length) : value;
+  }
   function filesDownloadHref(p) { var base = (typeof window !== "undefined" && window.__HERMES_BASE_PATH__) || ""; var tok = (typeof window !== "undefined" && window.__HERMES_SESSION_TOKEN__) || ""; var clean = String(p).replace(/^\/+/, ""); return base + "/api/files/download?path=" + encodeURIComponent(clean) + (tok ? "&token=" + encodeURIComponent(tok) : ""); }
   function isFilePath(p) { return /\.[A-Za-z0-9]{1,8}$/.test(String(p).split("/").pop()); }
 
@@ -705,6 +717,9 @@
     var activeLists = (treeFor(board).lists) || [];
     var activeMembership = (treeFor(board).membership) || {};
     var liveListIds = useMemo(function () { var m = {}; activeLists.forEach(function (l) { m[l.id] = 1; }); return m; }, [activeLists]);
+    function listNameForTask(t) { var lid = t && activeMembership[t.id]; var list = activeLists.filter(function (x) { return x.id === lid; })[0]; return list ? list.name : ""; }
+    function taskTitle(t) { return displayListTitle(t && t.title, listNameForTask(t)); }
+    function canonicalTaskTitle(title, listId) { var list = activeLists.filter(function (x) { return x.id === listId; })[0]; return canonicalListTitle(title, list ? list.name : ""); }
 
     var assignees = (data && data.assignees) || [];
     var assigneeChoices = (asgOpts && asgOpts.length) ? asgOpts : assignees;
@@ -722,7 +737,7 @@
     }, [bq, detail]);
     useEffect(function () { if (modalId) { loadDetail(modalId, true); loadWorkerLog(modalId); } }, [modalId]); // eslint-disable-line
     useEffect(function () {
-      if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? (t.title || "") : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
+      if (!modalId) return; var t = taskById[modalId]; setTitleDraft(t ? taskTitle(t) : ""); setDescEdit(false); setCommentDraft(""); setAddParentSel(""); setAddChildSel("");
       function onKey(e) { if (e.key === "Escape") { if (filePreviewRef.current) { if (filePreviewStackRef.current && filePreviewStackRef.current.length) backFilePreview(); else closeFilePreview(); } else setModalId(null); } }
       window.addEventListener("keydown", onKey); return function () { window.removeEventListener("keydown", onKey); };
     }, [modalId]); // eslint-disable-line
@@ -736,7 +751,7 @@
     function setStatus(t, v) { if (v !== t.status) applyEdit(t, { status: v }, "status"); }
     function setPriority(t, v) { var n = parseInt(v, 10); if (n !== (t.priority == null ? 0 : t.priority)) applyEdit(t, { priority: n }, "priority"); }
     function setAssignee(t, v) { if ((v || "") !== (t.assignee || "")) applyEdit(t, { assignee: v }, "assignee"); }
-    function saveTitle(t) { var v = titleDraft.trim(); if (!v || v === (t.title || "")) return; applyEdit(t, { title: v }, "title"); }
+    function saveTitle(t) { var v = titleDraft.trim(); var canonical = canonicalTaskTitle(v, activeMembership[t.id]); if (!v || canonical === (t.title || "")) return; applyEdit(t, { title: canonical }, "title"); }
 
     // ---- list / membership mutations ----------------------------------------
     function activate(slug, sc) { setBoard(slug); setScope(sc); setCollapsedBoards(function (n) { var x = Object.assign({}, n); x[slug] = false; return x; }); if (isNarrow) setSidebarOpen(false); }
@@ -747,7 +762,7 @@
     function moveToList(taskId, listId) { if (!taskId) return; var ids = [taskId].concat(descendantsOf(taskId)); setNotice(null); var chain = Promise.resolve(); ids.forEach(function (tid) { chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: tid, list_id: listId || null }); }); }); chain.then(function () { loadTreeFor(board); }).catch(function (e) { setNotice("Could not move task: " + ((e && e.message) || "error")); loadTreeFor(board); }); }
     function addTask(listId, status, title) {
       title = (title || "").trim(); if (!title) return; setNotice(null);
-      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: status === "triage" }).then(function (r) {
+      send("POST", KAPI + "/tasks" + bq(), { title: canonicalTaskTitle(title, listId), triage: status === "triage" }).then(function (r) {
         var id = r && r.task && r.task.id; var p = Promise.resolve();
         if (id && listId) p = send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: listId });
         if (id && status && status !== "triage" && settableStatuses.indexOf(status) !== -1) p = p.then(function () { return send("PATCH", KAPI + "/tasks/" + encodeURIComponent(id) + bq(), { status: status }); });
@@ -781,7 +796,7 @@
       setSavingNew(true); setNotice(null);
       var d = draft;
       var tp = KAPI + "/tasks/";
-      send("POST", KAPI + "/tasks" + bq(), { title: title, triage: false }).then(function (r) {
+      send("POST", KAPI + "/tasks" + bq(), { title: canonicalTaskTitle(title, d.list_id), triage: false }).then(function (r) {
         var id = (r && ((r.task && r.task.id) || r.id || r.task_id || r.taskId)) || null;
         if (!id) return; // task created but id not in response shape -> still close+reload below
         var chain = Promise.resolve();
@@ -1315,7 +1330,7 @@
           h("div", { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } },
             disc,
             Dot(pri.color, 8),
-            h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 } }, t.title || "(untitled)"),
+            h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 } }, taskTitle(t) || "(untitled)"),
             kidBadge(t),
             prog ? badge(prog.done + "/" + prog.total, prog.done >= prog.total && prog.total > 0 ? "#34d399" : "#fbbf24") : null,
             (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null)
@@ -1341,7 +1356,7 @@
           disc,
           h("span", { title: "Drag to move into a list", style: { display: "inline-flex", color: muted, cursor: "grab" } }, Grip()),
           Dot(pri.color, 8),
-          h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.title || "(untitled)"),
+          h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, taskTitle(t) || "(untitled)"),
           kidBadge(t),
           prog ? badge(prog.done + "/" + prog.total, prog.done >= prog.total && prog.total > 0 ? "#34d399" : "#fbbf24") : null,
           (t.comment_count ? h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: muted } }, CommentIcon(), t.comment_count) : null)
@@ -1422,7 +1437,7 @@
         var ct = taskById[lid]; var clickable = !!ct;
         return h("span", { key: lid, style: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, padding: "5px 7px 5px 12px", borderRadius: 999, border: "1px solid " + borderC, background: bgMuted } },
           ct && ct.status ? Dot(statusMeta(ct.status).dot, 7) : null,
-          h("span", { onClick: function () { if (clickable) setModalId(lid); }, title: clickable ? (ct.title || lid) : lid, style: { cursor: clickable ? "pointer" : "default", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: clickable ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (ct.title || lid) : lid),
+          h("span", { onClick: function () { if (clickable) setModalId(lid); }, title: clickable ? (taskTitle(ct) || lid) : lid, style: { cursor: clickable ? "pointer" : "default", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: clickable ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (taskTitle(ct) || lid) : lid),
           h("button", { onClick: function (e) { e.stopPropagation(); onRemove(); }, title: "Unlink", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex" } }, XIcon(13)));
       }
 
@@ -1459,7 +1474,7 @@
       var links = (d && d.links) || { parents: [], children: [] };
       var parents = links.parents || []; var children = links.children || [];
       var existing = parents.concat(children);
-      function otherOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return x.id !== id && existing.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (x.title || x.id) + "  \u00b7  " + String(x.id).slice(0, 10) }; })); }
+      function otherOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return x.id !== id && existing.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (taskTitle(x) || x.id) + "  ·  " + String(x.id).slice(0, 10) }; })); }
       var depBody = h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 } },
           h("span", { style: { fontSize: 12.5, color: muted, minWidth: 70 } }, "Parents"),
@@ -1683,7 +1698,7 @@
         var dim = hi && !hi[id]; var hov = graphHover === id;
         var depBlk = depBlocked(id);                          // waiting on an unfinished parent
         var isBlocked = depBlk || t.status === "blocked";      // emphasise either kind of block
-        var dm = statusMeta(t.status); var title = String(t.title || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "\u2026";
+        var dm = statusMeta(t.status); var title = String(taskTitle(t) || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "…";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
         var rest = (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
         // The status line can overflow the box (e.g. "To Do · waiting on a parent · 2 parents · 1 child").
@@ -1923,12 +1938,12 @@
           var dParents = draft.parents || []; var dChildren = draft.children || [];
           var dExisting = dParents.concat(dChildren);
           var depNone = function () { return h("span", { style: { fontSize: 13, color: muted, fontStyle: "italic" } }, "none"); };
-          function depOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return dExisting.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (x.title || x.id) + "  \u00b7  " + String(x.id).slice(0, 10) }; })); }
+          function depOpts(placeholder) { return [{ value: "", label: placeholder }].concat(tasks.filter(function (x) { return dExisting.indexOf(x.id) === -1; }).map(function (x) { return { value: x.id, label: (taskTitle(x) || x.id) + "  \u00b7  " + String(x.id).slice(0, 10) }; })); }
           function draftChip(lid, onRemove) {
             var ct = taskById[lid];
             return h("span", { key: lid, style: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, padding: "5px 7px 5px 12px", borderRadius: 999, border: "1px solid " + borderC, background: bgMuted } },
               ct && ct.status ? Dot(statusMeta(ct.status).dot, 7) : null,
-              h("span", { title: ct ? (ct.title || lid) : lid, style: { maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: ct ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (ct.title || lid) : lid),
+              h("span", { title: ct ? (taskTitle(ct) || lid) : lid, style: { maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: ct ? "inherit" : "var(--font-courier, monospace)" } }, ct ? (taskTitle(ct) || lid) : lid),
               h("button", { onClick: function (e) { e.stopPropagation(); onRemove(); }, title: "Remove", style: { background: "transparent", border: "none", color: muted, cursor: "pointer", padding: 0, display: "inline-flex" } }, XIcon(13)));
           }
           return cfield("Dependencies", h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
