@@ -252,17 +252,54 @@ def patch_list(list_id: str, body: ListPatch, board: Optional[str] = Query(None)
 
 @router.delete("/lists/{list_id}")
 def delete_list(list_id: str, board: Optional[str] = Query(None)):
-    """Delete a list and detach every task that was in it."""
+    """Delete a list, restoring titles and clearing its TaskList metadata."""
     b = _board(board)
     c = _conn()
+    attached = False
     try:
+        c.execute("BEGIN IMMEDIATE")
+        affected = list(c.execute(
+            "SELECT p.task_id, p.generated_suffix FROM membership AS m "
+            "JOIN title_provenance AS p ON p.board=m.board AND p.task_id=m.task_id "
+            "WHERE m.board=? AND m.list_id=?",
+            (b, list_id),
+        ))
+        if affected:
+            path = _kanban_db_path(b)
+            if path is None or not path.exists():
+                raise HTTPException(status_code=500, detail="kanban database unavailable")
+            c.execute("ATTACH DATABASE ? AS kanban", (str(path),))
+            attached = True
+            columns = {r["name"] for r in c.execute("PRAGMA kanban.table_info(tasks)")}
+            if not {"id", "title"}.issubset(columns):
+                raise HTTPException(status_code=500, detail="kanban tasks schema unavailable")
+            for task in affected:
+                suffix = task["generated_suffix"]
+                c.execute(
+                    "UPDATE kanban.tasks SET title=substr(title, 1, length(title)-length(?)) "
+                    "WHERE id=? AND substr(title, -length(?))=?",
+                    (suffix, task["task_id"], suffix, suffix),
+                )
+        c.execute(
+            "DELETE FROM title_provenance WHERE board=? AND task_id IN "
+            "(SELECT task_id FROM membership WHERE board=? AND list_id=?)",
+            (b, b, list_id),
+        )
         c.execute("DELETE FROM membership WHERE board=? AND list_id=?", (b, list_id))
         cur = c.execute("DELETE FROM lists WHERE id=? AND board=?", (list_id, b))
-        c.commit()
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="list not found")
+        c.commit()
         return {"ok": True}
+    except Exception:
+        c.rollback()
+        raise
     finally:
+        if attached:
+            try:
+                c.execute("DETACH DATABASE kanban")
+            except sqlite3.Error:
+                pass
         c.close()
 
 
