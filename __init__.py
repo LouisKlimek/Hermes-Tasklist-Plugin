@@ -7,35 +7,29 @@ and categorization just happens.
 
 How it works
 ------------
-It registers two kanban lifecycle hooks:
+It registers Hermes observers:
 
-* ``kanban_task_claimed``   — fires when a worker starts a task (earliest signal;
-                              there is no ``created`` hook in Hermes).
-* ``kanban_task_completed`` — cheap backstop for anything the first hook missed.
+* ``post_tool_call``          — after a successful agent-facing ``kanban_create``;
+                                this is the earliest supported signal for
+                                immediately filing a created child.
+* ``kanban_task_claimed``     — earliest Kanban lifecycle transition for all
+                                other creation paths.
+* ``kanban_task_completed``   — cheap backstop for anything the first hooks missed.
 
-On either event, for a task that isn't already in a list, it:
+On a child created through ``kanban_create``, the post-tool observer reads its
+durable task id and, if a parent is already filed in a list, copies that
+membership before the creating call returns. No model call or unrelated later
+event is required. For lifecycle-only paths, the claimed hook applies the same
+rule. Once a task is filed, any still-unsorted descendants adopt that list, so a
+child seen before its parent is repaired when the parent is filed.
 
-1. reads the task's title/body (read-only, straight from kanban.db),
-2. **if the task has a parent already filed in a list, the child adopts the
-   parent's list directly — no model call.** This is deterministic and is the
-   reliable path for subtasks created automatically by AI via the API, which
-   would otherwise default to "No list". After a task is filed, any of its own
-   still-unsorted children adopt that list too, so a child claimed *before* its
-   parent was sorted is fixed up as soon as the parent lands.
+Every claimed/completed event also runs a cheap, deterministic board-wide
+reconciliation sweep: any still-unsorted child whose parent already has a list
+is filed into it. This is a recovery path for creation processes where the
+plugin was not enabled.
 
-   On **every** claimed/completed event the plugin also runs a cheap,
-   deterministic board-wide reconciliation sweep: any still-unsorted child
-   whose parent is already in a list is filed into that list. This is the
-   self-heal for the case where a child's *own* ``claimed`` hook (which fires in
-   the dispatcher process, not the worker) never ran this plugin — the next
-   hook on any task on the board repairs it, so nothing stays stuck in
-   "No list" just because one hook was missed.
-3. otherwise reads the board's existing lists from the TaskList DB,
-4. asks the user's *active* model — via host-owned ``ctx.llm`` (no provider
-   keys live in this plugin) — for the single best-fitting existing list, or a
-   short new list name if none fits,
-5. writes the membership (creating the list if needed) into the very same
-   ``$HERMES_HOME/tasklist/lists.db`` the dashboard reads.
+Parentless tasks are then classified using the active model via host-owned
+``ctx.llm``; parent inheritance itself is deterministic and never calls a model.
 
 Everything is best-effort: any failure (no ``ctx.llm`` in this context, model
 error, db hiccup) is swallowed so a misbehaving observer can never break a
@@ -62,6 +56,7 @@ If you change it there, mirror it here.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -473,6 +468,33 @@ def _place_task(ctx: Any, c: sqlite3.Connection, task_id: str, board: str) -> No
     _propagate_to_children(c, board, task_id, target["id"])
 
 
+def _inherit_created_child(task_id: str, board: Optional[str]) -> None:
+    """Immediately apply only deterministic inheritance after ``kanban_create``."""
+    if not task_id:
+        return
+    board = _board_key(board)
+    try:
+        c = _conn()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("tasklist autosort: post-create db open failed: %s", exc)
+        return
+    try:
+        existing = _list_of_task(c, board, task_id)
+        if existing:
+            _propagate_to_children(c, board, task_id, existing)
+            return
+        inherited = _inherit_parent_list(c, board, task_id)
+        if not inherited:
+            return
+        _set_membership(c, board, task_id, inherited)
+        _propagate_to_children(c, board, task_id, inherited)
+        logger.info("tasklist autosort: %s inherited parent list %s at creation", task_id, inherited)
+    except Exception as exc:  # noqa: BLE001 — observer must never affect creation
+        logger.warning("tasklist autosort: post-create inheritance failed for %s: %s", task_id, exc)
+    finally:
+        c.close()
+
+
 def _autosort(ctx: Any, task_id: str, board: Optional[str]) -> None:
     if not task_id:
         return
@@ -512,12 +534,34 @@ def _autosort(ctx: Any, task_id: str, board: Optional[str]) -> None:
 # plugin entry point
 # --------------------------------------------------------------------------- #
 def register(ctx: Any) -> None:
+    def on_created_via_tool(*, tool_name="", args=None, result=None, **kw):
+        """File a newly-created Kanban child before the tool call returns.
+
+        Hermes currently has no ``kanban_task_created`` lifecycle hook. Its
+        supported ``post_tool_call`` observer does expose the durable result of
+        ``kanban_create``, including the new task id, so this is the earliest
+        supported plugin signal for agent-created children. It is deliberately
+        limited to deterministic parent inheritance: parentless tasks still
+        wait for the normal claimed lifecycle hook and LLM classification.
+        """
+        if tool_name != "kanban_create":
+            return
+        try:
+            payload = json.loads(result) if isinstance(result, str) else result
+            child_id = payload.get("task_id") if isinstance(payload, dict) else None
+            if child_id:
+                board = args.get("board") if isinstance(args, dict) else None
+                _inherit_created_child(str(child_id), board)
+        except Exception as exc:  # noqa: BLE001 — observer must never affect creation
+            logger.debug("tasklist autosort: post-create inheritance skipped: %s", exc)
+
     def on_claimed(*, task_id=None, board=None, **kw):
         _autosort(ctx, task_id, board)
 
     def on_completed(*, task_id=None, board=None, **kw):
         _autosort(ctx, task_id, board)  # backstop; no-ops if already placed
 
+    ctx.register_hook("post_tool_call", on_created_via_tool)
     ctx.register_hook("kanban_task_claimed", on_claimed)
     ctx.register_hook("kanban_task_completed", on_completed)
     logger.debug("tasklist autosort: hooks registered")

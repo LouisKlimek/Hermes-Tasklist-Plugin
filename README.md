@@ -166,13 +166,12 @@ Agents *can* opt into the lists, though — see below.
 
 ## Automatic sorting (zero‑config)
 
-The plugin ships a second half that files tasks into lists **by itself** — no orchestrator wiring, no agent prompt changes, no provider keys. It's a Hermes *hook plugin* (`plugin.yaml` + `__init__.py` next to `dashboard/`) that registers the kanban lifecycle hooks `kanban_task_claimed` and `kanban_task_completed`. When a task first moves through the board it:
+The plugin ships a second half that files tasks into lists **by itself** — no orchestrator wiring, no agent prompt changes, no provider keys. It uses Hermes' supported `post_tool_call`, `kanban_task_claimed`, and `kanban_task_completed` observers.
 
-1. reads the task title/body straight from `kanban.db` (read‑only),
-2. **if the task has a parent already filed in a list, it adopts the parent's list directly — no model call.** This is deterministic and is the reliable path for subtasks created automatically by AI via the API, which would otherwise default to **No list**. When a parent is filed, any of its still‑unsorted children (and their children, recursively) adopt the same list too — so a child claimed *before* its parent was sorted gets repaired the next time the parent moves through a hook.
-3. otherwise reads the board's existing lists,
-4. asks your **active model** via host‑owned `ctx.llm.complete_structured()` for the best‑fitting existing list — or a short new one if none fits,
-5. writes the membership (creating the list if needed) into the same `lists.db` the dashboard reads.
+1. **Immediately after `kanban_create` succeeds**, `post_tool_call` reads its durable `{task_id}` result. If the new child has an already-filed parent, it receives that exact list membership before the creating tool call returns — no LLM call and no later, unrelated board event.
+2. If a child is first observable through a lifecycle transition instead (for example, a dashboard/CLI-created task), `kanban_task_claimed` is the earliest available Kanban lifecycle signal. It applies the same deterministic inheritance; `completed` remains a backstop.
+3. After a task is filed, any still-unsorted descendants are propagated into that list. This repairs child-before-parent timing without changing an existing/manual membership.
+4. Only parentless tasks (or children with no assigned parent) fall through to `ctx.llm.complete_structured()` at claim time to choose or create a list.
 
 Enable it once:
 
@@ -180,16 +179,36 @@ Enable it once:
 hermes plugins enable tasklist
 ```
 
-After that, new tasks land in the right list (or a freshly‑created one) as they're claimed — the List view reflects it on its next poll.
+### Inheritance rule and lifecycle limits
 
-Notes & honest caveats:
+- Hermes has **no `kanban_task_created` lifecycle hook**. `post_tool_call` is the supported earliest observer for children created via the agent-facing `kanban_create` tool; `claimed` is the earliest supported lifecycle transition for all other creation paths. The plugin does not claim a nonexistent creation hook.
+- Children follow their parent for free: the path is only `task_links` + `lists.db`, never an LLM. For multiple parents, live placement uses the first parent **with membership** in stable `task_links` insertion order. The first already-existing child membership always wins and is never overwritten.
+- Every claimed/completed event also runs an idempotent board-wide direct-child sweep. This is a recovery path for a creator process in which the plugin was not enabled; it is no longer the normal path for `kanban_create` children.
+- The hooks are observers: failures are logged and swallowed so they cannot break Kanban task creation or state transitions.
 
-- **Children follow their parent for free.** Parent inheritance is a plain lookup against `task_links` + `lists.db` — no model call, no cost, fully deterministic. Only *parentless* tasks (or children whose parents aren't in any list) fall through to the LLM classifier. A task with **multiple parents** adopts the first parent (by link insertion order) that already has a list, so placement is reproducible.
-- **No `created` hook exists in Hermes**, so the earliest signal is `claimed` — tasks are sorted when work *starts* on them, not the instant they're created. `completed` acts as a backstop. Because parent inheritance also propagates downward whenever a parent passes through a hook, an already‑placed parent fixes up its unsorted children on its next `claimed`/`completed` event.
-- **Self‑heal for missed hooks.** The `claimed` hook fires in the **dispatcher** process (not the worker), so if this plugin wasn't active there for a fast task, that child could be left in **No list** even though its parent was already filed. To close that gap, **every** `claimed`/`completed` event now also runs a cheap, deterministic board‑wide reconciliation sweep: any still‑unsorted child whose parent already has a list is filed into it. So a missed child no longer stays stuck — the next hook on *any* task on the board repairs it. The sweep is pure `task_links` + `lists.db` lookups (no model call), respects manual placements, and is idempotent.
-- It reuses existing lists by case‑insensitive name (never duplicates) and only creates a list when the model decides none fit.
-- It's **best‑effort**: any failure (model unavailable in your build's worker‑hook context, db hiccup) is swallowed — it can never break a board transition. If `ctx.llm` isn't wired in that context on your Hermes version, auto‑sort simply no‑ops and the manual lists keep working. Parent inheritance still works even when `ctx.llm` is absent, since it never calls the model.
-- **Cost**: at most one small structured model call per first‑seen *parentless* task. Children inheriting a parent's list cost nothing. On a busy board pin a cheap model under `plugins.entries.tasklist.llm.allowed_models` in `config.yaml`.
+### Conservative historical `No list` reconciliation
+
+Use the CLI with the **same `HERMES_HOME` as the active dashboard**. `reconcile` is dry-run by default and reads `kanban.db` read-only; it writes only the plugin's `tasklist/lists.db` when `--apply` is explicit.
+
+```bash
+# Audit only: reports each candidate's task id, proposed list, rule, and evidence.
+HERMES_HOME=/path/to/active/hermes-home \
+  python3 dashboard/tasklist_cli.py reconcile --board opportunity-discovery
+
+# Apply exactly the candidates reported by the audit.
+HERMES_HOME=/path/to/active/hermes-home \
+  python3 dashboard/tasklist_cli.py reconcile --board opportunity-discovery --apply
+```
+
+The JSON report includes `scanned_no_list`, `candidate_count`, `candidates`, `skipped_ambiguous`, `skipped_no_evidence`, and `changes_made`. A repeated `--apply` is idempotent: already-filed tasks are skipped and `changes_made` becomes zero.
+
+Historical writes are deliberately stricter than live inheritance:
+
+- an unassigned task may be assigned when every assigned ancestor resolves to one exact existing list (`assigned-ancestor`), including nested descendants;
+- otherwise, it may be assigned only when its title ends in one unique, exact canonical TaskList suffix such as ` [Research]` (`canonical-title-context`);
+- different ancestor lists, ancestor-versus-title disagreement, duplicate matching list contexts, missing evidence, and every existing/manual membership are left untouched in **No list** and counted in the report.
+
+Back up `tasklist/lists.db` before any production `--apply`; the command never writes `kanban.db`.
 
 ### Manual / explicit alternative — the CLI
 

@@ -1,8 +1,9 @@
 name: tasklist
-version: 1.0.0
-description: "TaskList auto-sort: when a kanban task is claimed/completed, file it into the best-fitting TaskList list using your active model (no provider keys), creating a fitting list when none exists. Pairs with the TaskList dashboard plugin in dashboard/."
+version: 1.1.0
+description: "TaskList auto-sort: immediately inherit parent TaskList membership after kanban_create, then reconcile lifecycle misses deterministically; parentless tasks use the active model only when claimed. Pairs with the TaskList dashboard plugin in dashboard/."
 author: Louis Klimek
-# Kanban lifecycle hooks this plugin observes (also registered in register()).
+# Hermes observer hooks this plugin uses (also registered in register()).
 hooks:
+  - post_tool_call
   - kanban_task_claimed
   - kanban_task_completed
