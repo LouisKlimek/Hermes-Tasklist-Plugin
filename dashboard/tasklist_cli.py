@@ -63,6 +63,16 @@ def _db_path(home_override: str | None = None) -> Path:
     return d / "lists.db"
 
 
+def _readonly_conn(home_override: str | None = None) -> sqlite3.Connection:
+    """Open an existing TaskList database without creating files or WAL state."""
+    path = _hermes_home(home_override) / "tasklist" / "lists.db"
+    if not path.is_file():
+        raise ValueError(f"TaskList database not found: {path}")
+    c = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True, check_same_thread=False)
+    c.row_factory = sqlite3.Row
+    return c
+
+
 def _conn(home_override: str | None = None) -> sqlite3.Connection:
     c = sqlite3.connect(str(_db_path(home_override)), check_same_thread=False)
     c.row_factory = sqlite3.Row
@@ -172,6 +182,74 @@ def _clear_membership(c: sqlite3.Connection, board: str, task_id: str) -> int:
     return cur.rowcount
 
 
+def _kanban_db_path(board: str, home_override: str | None = None) -> Path:
+    """Locate a board DB without ever opening it for write access."""
+    explicit = os.environ.get("HERMES_KANBAN_DB")
+    if explicit:
+        return Path(explicit)
+    if home_override:
+        root = Path(home_override)
+    else:
+        root = Path(os.environ.get("HERMES_KANBAN_HOME") or _hermes_home())
+    return root / "kanban.db" if board == "default" else root / "kanban" / "boards" / board / "kanban.db"
+
+
+def _read_kanban_tasks_and_links(path: Path) -> tuple[list[tuple[str, str]], dict[str, list[str]]]:
+    if not path.exists():
+        raise ValueError(f"kanban database not found: {path}")
+    try:
+        kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            tasks = [(str(row[0]), str(row[1] or "")) for row in kc.execute(
+                "SELECT id, title FROM tasks ORDER BY id"
+            )]
+            parents: dict[str, list[str]] = {}
+            for parent_id, child_id in kc.execute("SELECT parent_id, child_id FROM task_links ORDER BY rowid"):
+                if parent_id and child_id:
+                    parents.setdefault(str(child_id), []).append(str(parent_id))
+            return tasks, parents
+        finally:
+            kc.close()
+    except sqlite3.Error as exc:
+        raise ValueError(f"cannot read kanban database: {exc}") from exc
+
+
+def _assigned_ancestor_evidence(
+    task_id: str, parents: dict[str, list[str]], membership: dict[str, str],
+) -> tuple[str | None, list[str], bool]:
+    """Return one unambiguous assigned ancestor list, otherwise ambiguity.
+
+    Every reachable parent is considered. More than one assigned list is an
+    explicit conflict; the caller must leave the task untouched. This differs
+    from live inheritance, whose documented tie-breaker is link insertion
+    order, because historical writes must be conservative.
+    """
+    stack = list(parents.get(task_id, ()))
+    seen: set[str] = set()
+    evidence: dict[str, list[str]] = {}
+    while stack:
+        ancestor = stack.pop(0)
+        if ancestor in seen:
+            continue
+        seen.add(ancestor)
+        list_id = membership.get(ancestor)
+        if list_id:
+            evidence.setdefault(list_id, []).append(ancestor)
+        stack.extend(parents.get(ancestor, ()))
+    if len(evidence) == 1:
+        list_id, ids = next(iter(evidence.items()))
+        return list_id, sorted(ids), False
+    return None, sorted({item for ids in evidence.values() for item in ids}), bool(evidence)
+
+
+def _canonical_title_list(title: str, lists: list[dict]) -> tuple[str | None, list[str]]:
+    """Recognize only an exact, unique TaskList canonical title suffix."""
+    matches = [lst for lst in lists if title.endswith(f" [{lst['name']}]")]
+    if len(matches) == 1:
+        return matches[0]["id"], [f"[{matches[0]['name']}]"]
+    return None, []
+
+
 # --------------------------------------------------------------------------- #
 # commands
 # --------------------------------------------------------------------------- #
@@ -237,6 +315,81 @@ def cmd_unassign(args) -> dict:
         c.close()
 
 
+def cmd_reconcile(args) -> dict:
+    """Safely propose or apply deterministic No-list historical backfill."""
+    board = _board(args.board)
+    tasks, parents = _read_kanban_tasks_and_links(_kanban_db_path(board, args.home))
+    c = _conn(args.home) if args.apply else _readonly_conn(args.home)
+    try:
+        lists = _all_lists(c, board)
+        lists_by_id = {lst["id"]: lst for lst in lists}
+        membership = {
+            str(row["task_id"]): str(row["list_id"])
+            for row in c.execute("SELECT task_id, list_id FROM membership WHERE board=?", (board,))
+        }
+        candidates: list[dict] = []
+        proposal_list_ids: dict[str, str] = {}
+        skipped_ambiguous = 0
+        skipped_no_evidence = 0
+        scanned_no_list = 0
+        for task_id, title in tasks:
+            if task_id in membership:
+                continue  # never overwrite any existing/manual membership
+            scanned_no_list += 1
+            ancestor_id, ancestor_evidence, ancestor_ambiguous = _assigned_ancestor_evidence(
+                task_id, parents, membership,
+            )
+            context_id, context_evidence = _canonical_title_list(title, lists)
+            proposal_id: str | None = None
+            rule = ""
+            evidence: list[str] = []
+            if ancestor_ambiguous:
+                skipped_ambiguous += 1
+                continue
+            if ancestor_id and context_id and ancestor_id != context_id:
+                skipped_ambiguous += 1
+                continue
+            if ancestor_id:
+                proposal_id, rule, evidence = ancestor_id, "assigned-ancestor", ancestor_evidence
+            elif context_id:
+                proposal_id, rule, evidence = context_id, "canonical-title-context", context_evidence
+            else:
+                skipped_no_evidence += 1
+                continue
+            target = lists_by_id.get(proposal_id)
+            if target is None:  # stale membership/list deletion: never infer a replacement
+                skipped_no_evidence += 1
+                continue
+            proposal_list_ids[task_id] = target["id"]
+            candidates.append({
+                "task_id": task_id,
+                "list": target["name"],
+                "rule": rule,
+                "evidence": evidence,
+            })
+        changes_made = 0
+        if args.apply:
+            for candidate in candidates:
+                if _already_assigned := c.execute(
+                    "SELECT 1 FROM membership WHERE board=? AND task_id=?", (board, candidate["task_id"])
+                ).fetchone():
+                    continue
+                _set_membership(c, board, candidate["task_id"], proposal_list_ids[candidate["task_id"]])
+                changes_made += 1
+        return {
+            "board": board,
+            "dry_run": not args.apply,
+            "scanned_no_list": scanned_no_list,
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+            "skipped_ambiguous": skipped_ambiguous,
+            "skipped_no_evidence": skipped_no_evidence,
+            "changes_made": changes_made,
+        }
+    finally:
+        c.close()
+
+
 # --------------------------------------------------------------------------- #
 # entrypoint
 # --------------------------------------------------------------------------- #
@@ -272,6 +425,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--board", default="default")
     s.add_argument("--task", required=True)
     s.set_defaults(fn=cmd_unassign)
+
+    s = sub.add_parser(
+        "reconcile",
+        help="audit historical No-list tasks; dry-run by default, --apply writes only unambiguous proposals",
+    )
+    s.add_argument("--board", default="default")
+    s.add_argument("--apply", action="store_true", help="apply the reported deterministic candidates")
+    s.set_defaults(fn=cmd_reconcile)
 
     return p
 
