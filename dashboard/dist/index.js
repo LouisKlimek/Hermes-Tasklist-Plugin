@@ -569,7 +569,7 @@
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
     s = useState(false); var confirmClose = s[0], setConfirmClose = s[1];
     var draftInit = useRef(null);
-    s = useState(null); var followup = s[0], setFollowup = s[1];   // { srcTask, feedback, route, priority } for the "Create follow-up from feedback" popup
+    s = useState(null); var followup = s[0], setFollowup = s[1];   // { srcTask, feedback, files, assignee, priority } for the "Create follow-up from feedback" popup
     s = useState(false); var savingFollowup = s[0], setSavingFollowup = s[1];
     useEffect(function () { setModalTab("details"); setConfirmDel(null); setConfirmArchive(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
@@ -867,7 +867,7 @@
       // Make sure we have the freshest detail (body) for prefill.
       loadDetail(src.id, false);
       // Default the assignee to the same one as the source task we're leaving feedback on.
-      setFollowup({ srcTask: src, feedback: "", assignee: (src.assignee || ""), priority: "1" });
+      setFollowup({ srcTask: src, feedback: "", files: [], uploadError: "", assignee: (src.assignee || ""), priority: "1" });
       setSavingFollowup(false);
     }
     function closeFollowup() { setFollowup(null); setSavingFollowup(false); }
@@ -894,10 +894,11 @@
       bodyLines.push("", "Feedback:", feedback);
       var body = bodyLines.join("\n");
       var tp = KAPI + "/tasks/";
+      var files = (followup.files || []).slice();
       var newId = null;
       send("POST", KAPI + "/tasks" + bq(), { title: title, triage: false }).then(function (r) {
         newId = (r && ((r.task && r.task.id) || r.id || r.task_id || r.taskId)) || null;
-        if (!newId) return;
+        if (!newId) throw new Error("The host did not return the new feedback id");
         var chain = Promise.resolve();
         // Newly-created cards default to "ready"; follow-ups must start in "todo".
         chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { status: "todo" }); }).catch(function () {});
@@ -910,11 +911,37 @@
         if (lid && liveListIds[lid]) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: newId, list_id: lid }); }).catch(function () {});
         // Parent link: the new follow-up is a child of the original task.
         chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: src.id, child_id: newId }); }).catch(function () {});
+        // Reuse the host's authenticated attachment endpoint. It owns authorization,
+        // CSRF, validation, storage, and retention; this plugin adds none of those.
+        files.forEach(function (file) {
+          chain = chain.then(function () {
+            var fd = new FormData(); fd.append("file", file);
+            return authFetch(KAPI + "/tasks/" + encodeURIComponent(newId) + "/attachments" + bq(), { method: "POST", body: fd }).then(function (r) {
+              if (!r.ok) throw new Error("Upload rejected (HTTP " + r.status + ")");
+              return r.json();
+            });
+          });
+        });
         return chain;
       }).then(function () {
         closeFollowup(); load(true); loadTreeFor(board); loadAssignees(); loadEdges();
         if (newId) setModalId(newId);
-      }).catch(function (e) { setSavingFollowup(false); setNotice("Could not create follow-up: " + ((e && e.message) || "error")); });
+      }).catch(function (e) {
+        // Host task deletion cascades attachments, so a failed upload cannot leave
+        // a partial feedback card or attachment association behind.
+        var cleanup = newId ? send("DELETE", tp + encodeURIComponent(newId) + bq(), null) : Promise.resolve();
+        cleanup.then(function () {
+          setSavingFollowup(false);
+          setFollowup(function (current) { return current ? Object.assign({}, current, { uploadError: "Could not submit feedback with its attachment. No feedback was saved; remove the file or try again." }) : current; });
+          setNotice("Could not create follow-up: " + ((e && e.message) || "error"));
+          load(true); loadTreeFor(board); loadEdges();
+        }).catch(function () {
+          setSavingFollowup(false);
+          setFollowup(function (current) { return current ? Object.assign({}, current, { uploadError: "Could not remove the partial feedback after its attachment failed. Please contact an administrator and reference " + newId + "." }) : current; });
+          setNotice("Could not create follow-up; automatic cleanup also failed.");
+          load(true); loadTreeFor(board); loadEdges();
+        });
+      });
     }
 
 
@@ -2056,6 +2083,11 @@
       var body = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "16px" : "22px 26px" } },
         context,
         ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
+        h("div", { style: { height: 14 } }),
+        ffield("Attachments", h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 9 } },
+          h("input", { type: "file", multiple: true, "aria-label": "Add feedback attachments", disabled: savingFollowup, onChange: function (e) { var selected = Array.prototype.slice.call((e.target && e.target.files) || []); if (selected.length) upd({ files: (followup.files || []).concat(selected), uploadError: "" }); e.target.value = ""; } }),
+          (followup.files || []).length ? h("div", { "aria-live": "polite", style: { width: "100%", display: "flex", flexDirection: "column", gap: 6 } }, (followup.files || []).map(function (file, index) { return h("div", { key: file.name + "-" + index, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, minWidth: 0 } }, h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 auto" } }, file.name + (file.size != null ? " (" + Math.ceil(file.size / 1024) + " KB)" : "")), h("button", { type: "button", disabled: savingFollowup, onClick: function () { upd({ files: (followup.files || []).filter(function (_, i) { return i !== index; }) }); }, "aria-label": "Remove attachment " + file.name, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 6, padding: "3px 7px", cursor: savingFollowup ? "not-allowed" : "pointer" } }, "Remove")); })) : h("span", { style: { fontSize: 12, color: muted } }, "Optional. Files are checked and stored by the host attachment service."),
+          followup.uploadError ? h("span", { role: "alert", style: { color: "#f87171", fontSize: 12.5, lineHeight: 1.45 } }, followup.uploadError) : null)),
         h("div", { style: { height: 22 } }),
         h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px" } },
           ffield("Assignee", h(DotSelect, { value: followup.assignee || "", options: asgOptsF, onChange: function (v) { upd({ assignee: v }); }, opts: { full: true, lg: true, search: true } })),
