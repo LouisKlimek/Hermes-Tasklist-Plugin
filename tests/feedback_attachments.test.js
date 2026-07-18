@@ -24,6 +24,9 @@ assert(submit[0].includes('KAPI + "/tasks/" + encodeURIComponent(newId) + "/atta
 assert(submit[0].includes('authFetch('), "uploads must retain the host authenticated request path");
 assert(submit[0].includes('if (!r.ok) throw new Error("Upload rejected'), "host validation rejections must stop submission");
 assert(submit[0].includes('send("DELETE", tp + encodeURIComponent(newId) + bq(), null)'), "failed uploads must clean up their created feedback task");
+assert(!submit[0].includes('cleanup.catch(function () { return null; })'), "a failed cleanup must not be silently treated as successful");
+assert(submit[0].includes('automatic cleanup also failed'), "cleanup failures must report a distinct user-safe error");
+assert(submit[0].includes('reference " + newId'), "cleanup failures must expose the partial feedback reference for recovery");
 assert(!submit[0].includes('localStorage.setItem'), "feedback attachments must not use plugin-local storage");
 
-console.log("feedback attachment contract: 14 assertions passed");
+console.log("feedback attachment contract: 17 assertions passed");

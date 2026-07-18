@@ -911,10 +911,15 @@
         // Host task deletion cascades attachments, so a failed upload cannot leave
         // a partial feedback card or attachment association behind.
         var cleanup = newId ? send("DELETE", tp + encodeURIComponent(newId) + bq(), null) : Promise.resolve();
-        cleanup.catch(function () { return null; }).then(function () {
+        cleanup.then(function () {
           setSavingFollowup(false);
           setFollowup(function (current) { return current ? Object.assign({}, current, { uploadError: "Could not submit feedback with its attachment. No feedback was saved; remove the file or try again." }) : current; });
           setNotice("Could not create follow-up: " + ((e && e.message) || "error"));
+          load(true); loadTreeFor(board); loadEdges();
+        }).catch(function () {
+          setSavingFollowup(false);
+          setFollowup(function (current) { return current ? Object.assign({}, current, { uploadError: "Could not remove the partial feedback after its attachment failed. Please contact an administrator and reference " + newId + "." }) : current; });
+          setNotice("Could not create follow-up; automatic cleanup also failed.");
           load(true); loadTreeFor(board); loadEdges();
         });
       });
