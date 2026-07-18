@@ -22,11 +22,15 @@ assert.deepStrictEqual(matchedIds("t_6FA4FE0B t_deadbeef"), ["t_deadbeef"], "onl
 
 assert(source.includes("onOpen.ticketKnown(id)"), "candidate IDs must be validated against the current board task map");
 assert(source.includes("fn.ticketKnown = function (id) { return !!taskById[id]; };"), "only existing current-board task IDs are linkable");
+assert(source.includes('bq("include_archived=true")'), "the task map includes archived board-local tasks");
+assert(source.includes('"&include_archived=true"'), "polling preserves archived-task validation");
 assert(source.includes('u.searchParams.set("task", board + "\\u001f" + id)'), "ticket links must use the TaskList deep-link route");
 assert(source.includes('target: "_blank", rel: "noopener noreferrer", title: "Open task " + id'), "ticket links must open safely in a new tab");
+assert(source.includes("ticketText(inner, onOpen"), "inline code evaluates standalone ticket IDs");
+assert(source.includes('ticketText(code.join("\\n"), onOpen'), "fenced code evaluates standalone ticket IDs");
 
 assert(source.includes("mdBlocks(task.body, makePathHandler(false))"), "descriptions use ticket-aware markdown rendering");
 assert(source.includes("mdBlocks(r.summary, makePathHandler(false))"), "run-history summaries use ticket-aware markdown rendering");
 assert(source.includes('mdBlocks(c.body || c.text || "", makePathHandler(false))'), "comments use ticket-aware markdown rendering");
 
-console.log("task ID link contract: 15 assertions passed");
+console.log("task ID link contract: 19 assertions passed");

@@ -155,6 +155,20 @@
   // Task IDs are intentionally stricter than a generic word: only canonical,
   // board-local IDs become links. The caller supplies the board's live task map.
   function isCanonicalTaskId(id) { return /^t_[0-9a-f]{8}$/.test(String(id == null ? "" : id)); }
+  function ticketText(text, onOpen, keyPrefix) {
+    var s = String(text == null ? "" : text); if (!onOpen || !onOpen.ticketKnown || !onOpen.ticketHref) return s;
+    var re = /(^|[^0-9A-Za-z_])(t_[0-9a-f]{8})(?![0-9A-Za-z_])/g, out = [], last = 0, m, key = 0;
+    while ((m = re.exec(s)) !== null) {
+      if (m.index > last) out.push(s.slice(last, m.index));
+      if (m[1]) out.push(m[1]);
+      var id = m[2];
+      out.push(onOpen.ticketKnown(id) ? h("a", { key: keyPrefix + (key++), href: onOpen.ticketHref(id), target: "_blank", rel: "noopener noreferrer", title: "Open task " + id, onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline", cursor: "pointer" } }, id) : id);
+      last = m.index + m[0].length;
+    }
+    if (!out.length) return s;
+    if (last < s.length) out.push(s.slice(last));
+    return out;
+  }
   // Force readable code colours with !important, applied via a ref so they beat any
   // global dashboard/prose stylesheet (which can otherwise render code white-on-white).
   // These props are kept OUT of the React style object so re-renders don't drop the priority.
@@ -167,7 +181,7 @@
     function pstate(cand, isFile) { if (!onOpen || !onOpen.known) return "valid"; var st = onOpen.known(cand); if (st === undefined) { if (onOpen.ensure) onOpen.ensure(cand, isFile); return "pending"; } return st; }
     function panchor(cand, label, style, kk) { return h("a", { key: kk, href: (onOpen.hrefFor ? onOpen.hrefFor(cand) : filesDownloadHref(cand)), target: "_blank", rel: "noopener noreferrer", title: "Open " + cand, onClick: function (e) { e.preventDefault(); e.stopPropagation(); onOpen(cand); }, style: style }, label); }
     var pats = [
-      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp) && pstate(pp, true) === "valid") return panchor(pp, inner, Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }), "cl" + (key++)); return h("code", { key: "c" + (key++), ref: refInlineCode, style: { fontFamily: "var(--font-courier, monospace)", fontSize: "0.9em", borderRadius: 4, padding: "0.5px 5px" } }, inner); } },
+      { re: /`([^`]+)`/, mk: function (m) { var inner = m[1]; var pp = inner.trim(); if (onOpen && /^(?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8}$/.test(pp) && pstate(pp, true) === "valid") return panchor(pp, inner, Object.assign({}, mdCodeStyle(), { color: accent, textDecoration: "underline", cursor: "pointer", wordBreak: "break-all" }), "cl" + (key++)); return h("code", { key: "c" + (key++), ref: refInlineCode, style: { fontFamily: "var(--font-courier, monospace)", fontSize: "0.9em", borderRadius: 4, padding: "0.5px 5px" } }, ticketText(inner, onOpen, "ct" + key + "-")); } },
       { re: /((?:https?:\/\/|www\.)[^\s<>()\[\]]+)/, mk: function (m) { var raw = m[1].replace(/[.,;:!?]+$/, ""); var href = /^www\./i.test(raw) ? ("https://" + raw) : raw; return h("a", { key: "u" + (key++), href: href, target: "_blank", rel: "noopener noreferrer", onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline", wordBreak: "break-all" } }, raw); } },
       { re: /\*\*([^*]+)\*\*/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /__([^_]+)__/, mk: function (m) { return h("strong", { key: "b" + (key++) }, mdInline(m[1], onOpen)); } },
@@ -215,7 +229,7 @@
     while (i < lines.length) {
       var line = lines[i];
       var fence = /^\s*```/.test(line);
-      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), ref: refPreBlock, style: { margin: "0 0 12px", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { ref: refPreCode, style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre" } }, code.join("\n")))); continue; }
+      if (fence) { var code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; } i++; blocks.push(h("pre", { key: "pre" + (key++), ref: refPreBlock, style: { margin: "0 0 12px", borderRadius: 8, padding: "10px 12px", overflow: "auto" } }, h("code", { ref: refPreCode, style: { fontFamily: "var(--font-courier, monospace)", fontSize: 12, whiteSpace: "pre" } }, ticketText(code.join("\n"), onOpen, "pt" + key + "-")))); continue; }
       var hd = /^(#{1,6})\s+(.*)$/.exec(line);
       if (hd) { var lvl = hd[1].length; blocks.push(h("h" + Math.min(lvl, 6), { key: "h" + (key++), style: mdHeadingStyle(lvl) }, mdInline(hd[2].replace(/\s+#+\s*$/, ""), onOpen))); i++; continue; }
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { blocks.push(h("hr", { key: "hr" + (key++), style: { border: "none", borderTop: "1px solid rgba(128,128,128,.28)", margin: "14px 0" } })); i++; continue; }
@@ -694,7 +708,8 @@
     var wantArchived = showArchived || scope.type === "archived";
     var load = useCallback(function (silent) {
       if (!silent) setLoading(true);
-      getJSON(KAPI + "/board" + bq("include_archived=" + (wantArchived ? "true" : "false"))).then(function (r) { lastEvent.current = r.latest_event_id; setData(r); setError(null); setLoading(false); })
+      // Keep archived cards in the board map for safe task-ID validation; view scope still hides them unless requested.
+      getJSON(KAPI + "/board" + bq("include_archived=true")).then(function (r) { lastEvent.current = r.latest_event_id; setData(r); setError(null); setLoading(false); })
         .catch(function (e) { setError((e && e.message) || "Failed to load board"); setLoading(false); });
     }, [bq, wantArchived]);
     useEffect(function () { if (board) load(false); }, [load, board]);
@@ -708,7 +723,7 @@
     useEffect(function () {
       var t = setInterval(function () {
         if (document.hidden || !boardRef.current) return;
-        var q = "?board=" + encodeURIComponent(boardRef.current) + "&include_archived=" + (wantArchived ? "true" : "false");
+        var q = "?board=" + encodeURIComponent(boardRef.current) + "&include_archived=true";
         getJSON(KAPI + "/board" + q).then(function (r) { if (r.latest_event_id !== lastEvent.current) { lastEvent.current = r.latest_event_id; setData(r); } }).catch(function () {});
       }, POLL_MS);
       return function () { clearInterval(t); };
