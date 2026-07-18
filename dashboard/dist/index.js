@@ -152,6 +152,9 @@
   }
 
   function mdCodeStyle() { return { fontFamily: "var(--font-courier, monospace)", fontSize: "0.9em", background: "rgba(128,128,128,.18)", border: "1px solid rgba(128,128,128,.28)", borderRadius: 4, padding: "0.5px 5px", color: "inherit" }; }
+  // Task IDs are intentionally stricter than a generic word: only canonical,
+  // board-local IDs become links. The caller supplies the board's live task map.
+  function isCanonicalTaskId(id) { return /^t_[0-9a-f]{8}$/.test(String(id == null ? "" : id)); }
   // Force readable code colours with !important, applied via a ref so they beat any
   // global dashboard/prose stylesheet (which can otherwise render code white-on-white).
   // These props are kept OUT of the React style object so re-renders don't drop the priority.
@@ -172,6 +175,7 @@
       { re: /~~([^~]+)~~/, mk: function (m) { return h("del", { key: "s" + (key++) }, mdInline(m[1], onOpen)); } },
       { re: /\[([^\]]+)\]\(([^)\s]+)\)/, mk: function (m) { return h("a", { key: "l" + (key++), href: m[2], target: "_blank", rel: "noopener noreferrer", onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline" } }, m[1]); } }
     ];
+    if (onOpen && onOpen.ticketKnown && onOpen.ticketHref) pats.push({ re: /(^|[^0-9A-Za-z_])(t_[0-9a-f]{8})(?![0-9A-Za-z_])/, mk: function (m) { var lead = m[1], id = m[2]; if (!isCanonicalTaskId(id) || !onOpen.ticketKnown(id)) return m[0]; return h(React.Fragment, { key: "tk" + (key++) }, lead, h("a", { href: onOpen.ticketHref(id), target: "_blank", rel: "noopener noreferrer", title: "Open task " + id, onClick: function (e) { e.stopPropagation(); }, style: { color: accent, textDecoration: "underline", cursor: "pointer" } }, id)); } });
     if (onOpen) pats.push({ re: /((?:[\w.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,8})/, mk: function (m) { var pp = m[1]; if (pstate(pp, true) === "valid") return panchor(pp, pp, { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" }, "fp" + (key++)); return pp; } });
     if (onOpen && onOpen.folders) pats.push({ re: /((?:[\w.\-]+\/){2,}[\w.\-]+)(?![\w.\-]*\.[A-Za-z0-9])/, mk: function (m) { var raw = m[1]; var pp = raw.replace(/[.,;:!?]+$/, "").replace(/\/+$/, ""); var tail = raw.slice(pp.length); if (pstate(pp, false) === "valid") return h(React.Fragment, { key: "df" + (key++) }, panchor(pp, pp, { color: accent, textDecoration: "underline", wordBreak: "break-all", cursor: "pointer" }, "dp" + (key++)), tail); return raw; } });
     var guard = 0;
@@ -1144,6 +1148,13 @@
       fn.ensure = function (cand, isF, silent) { if (!cacheReadyRef.current) return; if (pathValidRef.current[cand]) return; pathValidRef.current[cand] = { state: "pending" }; validatePath(cand, isF).then(function (res) { var rec = res.valid ? { state: "valid", resolved: res.resolved } : { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); if (!silent) setPathV(function (v) { return v + 1; }); }).catch(function () { var rec = { state: "invalid" }; pathValidRef.current[cand] = rec; if (backendRef.current) pcRemotePut(cand, rec).catch(function () { }); else fxSaveCache(cand, rec); if (!silent) setPathV(function (v) { return v + 1; }); }); };
       fn.resolvedOf = function (cand) { var e = pathValidRef.current[cand]; return (e && e.resolved) || cand; };
       fn.hrefFor = function (p) { var t = fn.resolvedOf(p); return installed ? explorerHref(t) : (isFilePath(t) ? filesDownloadHref(t) : "#"); };
+      // Text renderers share this handler, so ticket validation is always against
+      // the selected board's current task data rather than the token shape alone.
+      fn.ticketKnown = function (id) { return !!taskById[id]; };
+      fn.ticketHref = function (id) {
+        try { var u = new URL(window.location.href); u.searchParams.set("task", board + "\u001f" + id); return u.pathname + (u.search || "") + (u.hash || ""); }
+        catch (e) { return "?task=" + encodeURIComponent(board + "\u001f" + id); }
+      };
       return fn;
     }
     function archiveTask(id, toStatus) {
