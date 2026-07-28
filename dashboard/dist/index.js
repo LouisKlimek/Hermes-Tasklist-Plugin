@@ -494,17 +494,41 @@
       /^\s*GitHub Auto Merge(?:\s+(?:PR\s*)?#?\d+)?(?:\s*:|$)/i.test(title);
   }
 
-  // Removes hidden stages from a DAG while preserving the nearest visible
-  // ancestor relation. sourceParents contains every in-scope edge before hiding;
-  // an edge is added only when it cannot introduce a cycle.
-  function projectGithubStageEdges(visibleIds, sourceParents) {
-    var visible = {}, par = {}, chi = {};
-    visibleIds.forEach(function (id) { visible[id] = 1; par[id] = []; chi[id] = []; });
+  function githubChildren(sourceParents) {
+    var children = {};
+    Object.keys(sourceParents).forEach(function (id) { children[id] = []; });
+    Object.keys(sourceParents).forEach(function (child) { (sourceParents[child] || []).forEach(function (parent) { (children[parent] = children[parent] || []).push(child); }); });
+    return children;
+  }
+
+  // Finds each visible parent's hidden GitHub-stage branches that rejoin the
+  // visible graph. The result supports independent, per-parent expansion.
+  function githubStageExpansionInfo(visibleIds, sourceParents, hiddenStageIds) {
+    var visible = {}, children = githubChildren(sourceParents), out = {};
+    visibleIds.forEach(function (id) { visible[id] = 1; });
+    visibleIds.forEach(function (root) {
+      var stages = {}, descendants = {}, seen = {}, stack = (children[root] || []).slice();
+      while (stack.length) {
+        var id = stack.pop(); if (seen[id]) continue; seen[id] = 1;
+        if (!hiddenStageIds[id]) { if (visible[id]) descendants[id] = 1; continue; }
+        stages[id] = 1; (children[id] || []).forEach(function (child) { stack.push(child); });
+      }
+      if (Object.keys(stages).length && Object.keys(descendants).length) out[root] = { stageIds: stages, descendantIds: descendants };
+    });
+    return out;
+  }
+
+  // Projects omitted stages out of a DAG while preserving nearest shown
+  // ancestor relations. sourceParents contains every in-scope edge before
+  // hiding; an edge is added only when it cannot introduce a cycle.
+  function projectGithubStageEdges(shownIds, sourceParents) {
+    var shown = {}, par = {}, chi = {};
+    shownIds.forEach(function (id) { shown[id] = 1; par[id] = []; chi[id] = []; });
     function nearestVisible(start) {
       var found = {}, seen = {}, stack = [start];
       while (stack.length) {
         var id = stack.pop(); if (seen[id]) continue; seen[id] = 1;
-        if (visible[id]) { found[id] = 1; continue; }
+        if (shown[id]) { found[id] = 1; continue; }
         (sourceParents[id] || []).forEach(function (parent) { stack.push(parent); });
       }
       return Object.keys(found);
@@ -514,7 +538,7 @@
       while (stack.length) { var id = stack.pop(); if (id === target) return true; if (seen[id]) continue; seen[id] = 1; (chi[id] || []).forEach(function (child) { stack.push(child); }); }
       return false;
     }
-    visibleIds.forEach(function (child) {
+    shownIds.forEach(function (child) {
       (sourceParents[child] || []).forEach(function (parent) {
         nearestVisible(parent).forEach(function (ancestor) {
           if (ancestor === child || par[child].indexOf(ancestor) !== -1 || reaches(child, ancestor)) return;
@@ -523,6 +547,14 @@
       });
     });
     return { par: par, chi: chi };
+  }
+
+  function projectGithubStageGraph(visibleIds, sourceParents, hiddenStageIds, expandedParents) {
+    var info = githubStageExpansionInfo(visibleIds, sourceParents, hiddenStageIds), included = {};
+    Object.keys(expandedParents || {}).forEach(function (parent) { if (expandedParents[parent] && info[parent]) Object.keys(info[parent].stageIds).forEach(function (id) { included[id] = 1; }); });
+    var shownIds = visibleIds.concat(Object.keys(included));
+    var projected = projectGithubStageEdges(shownIds, sourceParents);
+    return { ids: shownIds, par: projected.par, chi: projected.chi, expansionInfo: info, includedStageIds: included };
   }
 
   function cell(w, content, right) { return h("div", { style: { width: w + "px", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: right ? "flex-end" : "flex-start", overflow: "hidden" } }, content); }
@@ -567,6 +599,7 @@
     s = useState(false); var graphAnim = s[0], setGraphAnim = s[1];   // brief entrance-animation window
     s = useState(rd(LS_HIDE_DONE_CHAINS, "0") === "1"); var hideDoneChains = s[0], setHideDoneChains = s[1];   // graph: hide fully-done chains
     s = useState(rd(LS_HIDE_GITHUB_STAGES, "0") === "1"); var hideGithubStages = s[0], setHideGithubStages = s[1]; // graph: hide PR review/auto-merge stages
+    s = useState({}); var expandedGithubParents = s[0], setExpandedGithubParents = s[1]; // graph-only, per-parent reveal state
     s = useState(0); var colorV = s[0], setColorV = s[1];   // bumps when live Kanban colors are read
     useEffect(function () {
       var cancelled = false;
@@ -1757,16 +1790,18 @@
       }
       // Retain direct, unprojected dependencies for the blocked-state signal:
       // hiding a stage changes the view only, not whether its child is waiting.
-      var dependencyParents = {}, hiddenStageIds = {};
+      var dependencyParents = {}, hiddenStageIds = {}, githubExpansionInfo = {};
       list.forEach(function (t) { dependencyParents[t.id] = (par[t.id] || []).slice(); });
       if (hideGithubStages) {
         list.forEach(function (t) { if (isGithubPipelineStage(t)) hiddenStageIds[t.id] = 1; });
         var visibleList = list.filter(function (t) { return !hiddenStageIds[t.id]; });
         if (visibleList.length !== list.length) {
-          var projected = projectGithubStageEdges(visibleList.map(function (t) { return t.id; }), dependencyParents);
-          list = visibleList;
+          var projected = projectGithubStageGraph(visibleList.map(function (t) { return t.id; }), dependencyParents, hiddenStageIds, expandedGithubParents);
+          var shownIds = {}; projected.ids.forEach(function (id) { shownIds[id] = 1; });
+          list = list.filter(function (t) { return shownIds[t.id]; });
           par = projected.par;
           chi = projected.chi;
+          githubExpansionInfo = projected.expansionInfo;
         }
       }
       var level = {}, TEMP = {};
@@ -1790,8 +1825,8 @@
       var W = PADX * 2 + (maxLevel + 1) * (NODE_W + HGAP) - HGAP; if (W < PADX * 2 + NODE_W) W = PADX * 2 + NODE_W;
       var H = PADT + PADB + totalH; if (H < PADT + PADB + NODE_H) H = PADT + PADB + NODE_H;
       var elist = []; list.forEach(function (t) { chi[t.id].forEach(function (cid) { elist.push({ from: t.id, to: cid }); }); });
-      return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, dependencyParents: dependencyParents, hiddenStageIds: hiddenStageIds, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
-    }, [view, scopeTasks, edges, showArchived, taskById, hideDoneChains, hideGithubStages]);
+      return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, dependencyParents: dependencyParents, hiddenStageIds: hiddenStageIds, githubExpansionInfo: githubExpansionInfo, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
+    }, [view, scopeTasks, edges, showArchived, taskById, hideDoneChains, hideGithubStages, expandedGithubParents]);
 
     // SVG is memoised so pan/zoom (which only transform the wrapper) never re-render the nodes.
     var graphSvg = useMemo(function () {
@@ -1837,6 +1872,10 @@
         var oneLine = dm.label + waiting + rest;
         var wrapMeta = rest && (oneLine.length * metaCharW > metaAvail);
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
+        var expansion = gm.githubExpansionInfo[id], expanded = !!expandedGithubParents[id];
+        var expansionLabel = expansion ? (expanded ? "Collapse " : "Expand ") + Object.keys(expansion.stageIds).length + " hidden GitHub stage" + (Object.keys(expansion.stageIds).length === 1 ? "" : "s") : "";
+        function toggleGithubExpansion(e) { if (e) { e.preventDefault(); e.stopPropagation(); } setExpandedGithubParents(function (current) { var next = Object.assign({}, current); next[id] = !current[id]; return next; }); }
+        function onGithubExpansionKey(e) { if (e.key === "Enter" || e.key === " ") toggleGithubExpansion(e); }
         // Vertically center the text block: 2 lines when not wrapping, 3 lines when wrapping.
         var titleY = wrapMeta ? NODE_H / 2 - 12 : NODE_H / 2 - 4;
         var line2Y = titleY + 18;
@@ -1852,7 +1891,11 @@
               depBlk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, waiting) : null,
               (rest && !wrapMeta) ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null),
             wrapMeta ? h("text", { x: 36, y: line3Y, fontSize: 10.5 },
-              h("tspan", { fill: "currentColor", opacity: 0.55 }, rest.replace(/^\s*\u00b7\s*/, ""))) : null));
+              h("tspan", { fill: "currentColor", opacity: 0.55 }, rest.replace(/^\s*\u00b7\s*/, ""))) : null),
+          expansion ? h("g", { role: "button", tabIndex: 0, "aria-label": expansionLabel, "aria-pressed": expanded, onClick: toggleGithubExpansion, onKeyDown: onGithubExpansionKey, style: { cursor: "pointer" } },
+            h("title", null, expansionLabel),
+            h("rect", { x: NODE_W - 58, y: NODE_H - 20, width: 52, height: 14, rx: 7, fill: cardBg, stroke: accent, strokeWidth: 1 }),
+            h("text", { x: NODE_W - 32, y: NODE_H - 10, textAnchor: "middle", fill: accent, fontSize: 8.5, fontWeight: 700 }, expanded ? "Hide path" : "Show path")) : null);
       });
       return h("svg", { width: gm.W, height: gm.H, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
         h("defs", null,
