@@ -46,7 +46,7 @@
 
   var KAPI = "/api/plugins/kanban";
   var TLAPI = "/api/plugins/tasklist";
-  var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy", LS_VIEW = "tasklist.view", LS_HIDE_DONE_CHAINS = "tasklist.hideDoneChains", LS_HIDE_GITHUB_STAGES = "tasklist.hideGithubStages";
+  var LS_BOARD = "tasklist.board", LS_SCOPE = "tasklist.scope", LS_GROUPBY = "tasklist.groupBy", LS_VIEW = "tasklist.view", LS_HIDE_DONE_CHAINS = "tasklist.hideDoneChains";
   var POLL_MS = 4000;
 
   var STATUS_ORDER = ["triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done", "archived"];
@@ -482,81 +482,6 @@
   function statusOptions(t) { var o = SETTABLE.map(function (st) { return { value: st, label: statusMeta(st).label }; }); if (SETTABLE.indexOf(t.status) === -1) o.unshift({ value: t.status, label: statusMeta(t.status).label }); return o; }
   function prioOptions(t) { var b = [{ value: "3", label: "Urgent" }, { value: "2", label: "High" }, { value: "1", label: "Normal" }, { value: "0", label: "Low" }]; var c = t.priority == null ? 0 : t.priority; if ([0, 1, 2, 3].indexOf(c) === -1) b.unshift({ value: String(c), label: "P" + c }); return b; }
 
-  // GitHub pipeline stages are deliberately identified by the established task
-  // conventions, not by assignee: a github-manager task can otherwise be a real,
-  // unrelated card. Supported forms are `Type: Pull Request Review`, `Type:
-  // GitHub Auto Merge`, `Review PR #…`, and `GitHub Auto Merge …`.
-  function isGithubPipelineStage(task) {
-    var title = String((task && (task.title || task.name)) || "");
-    var body = String((task && (task.body || task.description)) || "");
-    return /^\s*Type:\s*(?:Pull Request Review|GitHub Auto Merge)\s*$/im.test(body) ||
-      /^\s*Review PR\s*#\d+\s*:/i.test(title) ||
-      /^\s*GitHub Auto Merge(?:\s+(?:PR\s*)?#?\d+)?(?:\s*:|$)/i.test(title);
-  }
-
-  function githubChildren(sourceParents) {
-    var children = {};
-    Object.keys(sourceParents).forEach(function (id) { children[id] = []; });
-    Object.keys(sourceParents).forEach(function (child) { (sourceParents[child] || []).forEach(function (parent) { (children[parent] = children[parent] || []).push(child); }); });
-    return children;
-  }
-
-  // Finds each visible parent's hidden GitHub-stage branches that rejoin the
-  // visible graph. The result supports independent, per-parent expansion.
-  function githubStageExpansionInfo(visibleIds, sourceParents, hiddenStageIds) {
-    var visible = {}, children = githubChildren(sourceParents), out = {};
-    visibleIds.forEach(function (id) { visible[id] = 1; });
-    visibleIds.forEach(function (root) {
-      var stages = {}, descendants = {}, seen = {}, stack = (children[root] || []).slice();
-      while (stack.length) {
-        var id = stack.pop(); if (seen[id]) continue; seen[id] = 1;
-        if (!hiddenStageIds[id]) { if (visible[id]) descendants[id] = 1; continue; }
-        stages[id] = 1; (children[id] || []).forEach(function (child) { stack.push(child); });
-      }
-      if (Object.keys(stages).length && Object.keys(descendants).length) out[root] = { stageIds: stages, descendantIds: descendants };
-    });
-    return out;
-  }
-
-  // Projects omitted stages out of a DAG while preserving nearest shown
-  // ancestor relations. sourceParents contains every in-scope edge before
-  // hiding; an edge is added only when it cannot introduce a cycle.
-  function projectGithubStageEdges(shownIds, sourceParents) {
-    var shown = {}, par = {}, chi = {};
-    shownIds.forEach(function (id) { shown[id] = 1; par[id] = []; chi[id] = []; });
-    function nearestVisible(start) {
-      var found = {}, seen = {}, stack = [start];
-      while (stack.length) {
-        var id = stack.pop(); if (seen[id]) continue; seen[id] = 1;
-        if (shown[id]) { found[id] = 1; continue; }
-        (sourceParents[id] || []).forEach(function (parent) { stack.push(parent); });
-      }
-      return Object.keys(found);
-    }
-    function reaches(start, target) {
-      var seen = {}, stack = (chi[start] || []).slice();
-      while (stack.length) { var id = stack.pop(); if (id === target) return true; if (seen[id]) continue; seen[id] = 1; (chi[id] || []).forEach(function (child) { stack.push(child); }); }
-      return false;
-    }
-    shownIds.forEach(function (child) {
-      (sourceParents[child] || []).forEach(function (parent) {
-        nearestVisible(parent).forEach(function (ancestor) {
-          if (ancestor === child || par[child].indexOf(ancestor) !== -1 || reaches(child, ancestor)) return;
-          par[child].push(ancestor); chi[ancestor].push(child);
-        });
-      });
-    });
-    return { par: par, chi: chi };
-  }
-
-  function projectGithubStageGraph(visibleIds, sourceParents, hiddenStageIds, expandedParents) {
-    var info = githubStageExpansionInfo(visibleIds, sourceParents, hiddenStageIds), included = {};
-    Object.keys(expandedParents || {}).forEach(function (parent) { if (expandedParents[parent] && info[parent]) Object.keys(info[parent].stageIds).forEach(function (id) { included[id] = 1; }); });
-    var shownIds = visibleIds.concat(Object.keys(included));
-    var projected = projectGithubStageEdges(shownIds, sourceParents);
-    return { ids: shownIds, par: projected.par, chi: projected.chi, expansionInfo: info, includedStageIds: included };
-  }
-
   function cell(w, content, right) { return h("div", { style: { width: w + "px", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: right ? "flex-end" : "flex-start", overflow: "hidden" } }, content); }
   function colHeaderLbl(txt) { return h("span", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", color: muted, whiteSpace: "nowrap" } }, txt); }
   function columnHeader() {
@@ -598,8 +523,6 @@
     s = useState(null); var graphHover = s[0], setGraphHover = s[1];
     s = useState(false); var graphAnim = s[0], setGraphAnim = s[1];   // brief entrance-animation window
     s = useState(rd(LS_HIDE_DONE_CHAINS, "0") === "1"); var hideDoneChains = s[0], setHideDoneChains = s[1];   // graph: hide fully-done chains
-    s = useState(rd(LS_HIDE_GITHUB_STAGES, "0") === "1"); var hideGithubStages = s[0], setHideGithubStages = s[1]; // graph: hide PR review/auto-merge stages
-    s = useState({}); var expandedGithubParents = s[0], setExpandedGithubParents = s[1]; // graph-only, per-parent reveal state
     s = useState(0); var colorV = s[0], setColorV = s[1];   // bumps when live Kanban colors are read
     useEffect(function () {
       var cancelled = false;
@@ -738,7 +661,6 @@
     useEffect(function () { try { localStorage.setItem(LS_GROUPBY, groupBy); } catch (e) {} }, [groupBy]);
     useEffect(function () { try { localStorage.setItem(LS_VIEW, view); } catch (e) {} }, [view]);
     useEffect(function () { try { localStorage.setItem(LS_HIDE_DONE_CHAINS, hideDoneChains ? "1" : "0"); } catch (e) {} }, [hideDoneChains]);
-    useEffect(function () { try { localStorage.setItem(LS_HIDE_GITHUB_STAGES, hideGithubStages ? "1" : "0"); } catch (e) {} }, [hideGithubStages]);
     useEffect(function () { try { if (board) localStorage.setItem(LS_BOARD, board); } catch (e) {} }, [board]);
     useEffect(function () { try { localStorage.setItem(LS_SCOPE, JSON.stringify(scope)); } catch (e) {} }, [scope]);
 
@@ -1788,22 +1710,6 @@
           list.forEach(function (t) { (edges.parents[t.id] || []).forEach(function (pid) { if (idset[pid] && par[t.id].indexOf(pid) === -1) { par[t.id].push(pid); chi[pid].push(t.id); } }); });
         }
       }
-      // Retain direct, unprojected dependencies for the blocked-state signal:
-      // hiding a stage changes the view only, not whether its child is waiting.
-      var dependencyParents = {}, hiddenStageIds = {}, githubExpansionInfo = {};
-      list.forEach(function (t) { dependencyParents[t.id] = (par[t.id] || []).slice(); });
-      if (hideGithubStages) {
-        list.forEach(function (t) { if (isGithubPipelineStage(t)) hiddenStageIds[t.id] = 1; });
-        var visibleList = list.filter(function (t) { return !hiddenStageIds[t.id]; });
-        if (visibleList.length !== list.length) {
-          var projected = projectGithubStageGraph(visibleList.map(function (t) { return t.id; }), dependencyParents, hiddenStageIds, expandedGithubParents);
-          var shownIds = {}; projected.ids.forEach(function (id) { shownIds[id] = 1; });
-          list = list.filter(function (t) { return shownIds[t.id]; });
-          par = projected.par;
-          chi = projected.chi;
-          githubExpansionInfo = projected.expansionInfo;
-        }
-      }
       var level = {}, TEMP = {};
       function lvl(id) { if (level[id] !== undefined) return level[id]; if (TEMP[id]) return 0; TEMP[id] = 1; var m = -1; par[id].forEach(function (p) { var l = lvl(p); if (l > m) m = l; }); TEMP[id] = 0; level[id] = m + 1; return level[id]; }
       list.forEach(function (t) { lvl(t.id); });
@@ -1825,8 +1731,8 @@
       var W = PADX * 2 + (maxLevel + 1) * (NODE_W + HGAP) - HGAP; if (W < PADX * 2 + NODE_W) W = PADX * 2 + NODE_W;
       var H = PADT + PADB + totalH; if (H < PADT + PADB + NODE_H) H = PADT + PADB + NODE_H;
       var elist = []; list.forEach(function (t) { chi[t.id].forEach(function (cid) { elist.push({ from: t.id, to: cid }); }); });
-      return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, dependencyParents: dependencyParents, hiddenStageIds: hiddenStageIds, githubExpansionInfo: githubExpansionInfo, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
-    }, [view, scopeTasks, edges, showArchived, taskById, hideDoneChains, hideGithubStages, expandedGithubParents]);
+      return { ids: list.map(function (t) { return t.id; }), par: par, chi: chi, level: level, pos: pos, ord: ord, edges: elist, W: W, H: H, NODE_W: NODE_W, NODE_H: NODE_H, maxLevel: maxLevel, PADT: PADT };
+    }, [view, scopeTasks, edges, showArchived, taskById, hideDoneChains]);
 
     // SVG is memoised so pan/zoom (which only transform the wrapper) never re-render the nodes.
     var graphSvg = useMemo(function () {
@@ -1839,7 +1745,7 @@
       // A task's own status is the single source of truth. Separately, it's
       // "dependency-blocked" when it isn't done yet but at least one parent isn't
       // done — that's what the pulsing red outline flags.
-      function dependencyWait(id) { var t = taskById[id]; if (!t || t.status === "done") return ""; var ps = gm.dependencyParents[id] || par[id]; if (!ps || !ps.length) return ""; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return gm.hiddenStageIds[ps[i]] ? "hidden GitHub stage" : "parent"; } return ""; }
+      function depBlocked(id) { var t = taskById[id]; if (!t || t.status === "done") return false; var ps = par[id]; if (!ps || !ps.length) return false; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return true; } return false; }
       var BLOCK_COL = "#ef4444";
       var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = "currentColor";
       var maxChars = Math.max(6, Math.floor((NODE_W - 52) / 6.7));
@@ -1858,7 +1764,7 @@
       var nodeEls = gm.ids.map(function (id) {
         var t = taskById[id]; if (!t) return null; var p = pos[id];
         var dim = hi && !hi[id]; var hov = graphHover === id;
-        var waitingOn = dependencyWait(id), depBlk = !!waitingOn; // use unprojected dependencies
+        var depBlk = depBlocked(id);                          // waiting on an unfinished parent
         var isBlocked = depBlk || t.status === "blocked";      // emphasise either kind of block
         var dm = statusMeta(t.status); var title = String(taskTitle(t) || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "…";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
@@ -1866,16 +1772,12 @@
         // The status line can overflow the box (e.g. "To Do · waiting on a parent · 2 parents · 1 child").
         // SVG text does not wrap, so estimate its width and, when it exceeds the available box width,
         // push the parent/child counts onto a third line instead of running out of bounds.
-        var waiting = depBlk ? "  \u00b7  waiting on " + (waitingOn === "hidden GitHub stage" ? "a hidden GitHub stage" : "a parent") : "";
+        var waiting = depBlk ? "  \u00b7  waiting on a parent" : "";
         var metaAvail = NODE_W - 36 - 12;            // usable text width inside the box (px)
         var metaCharW = 5.6;                          // ~avg glyph width at fontSize 10.5
         var oneLine = dm.label + waiting + rest;
         var wrapMeta = rest && (oneLine.length * metaCharW > metaAvail);
         var innerStyle = { cursor: "pointer" }; if (graphAnim) innerStyle.animationDelay = (gm.ord[id] * 22) + "ms";
-        var expansion = gm.githubExpansionInfo[id], expanded = !!expandedGithubParents[id];
-        var expansionLabel = expansion ? (expanded ? "Collapse " : "Expand ") + Object.keys(expansion.stageIds).length + " hidden GitHub stage" + (Object.keys(expansion.stageIds).length === 1 ? "" : "s") : "";
-        function toggleGithubExpansion(e) { if (e) { e.preventDefault(); e.stopPropagation(); } setExpandedGithubParents(function (current) { var next = Object.assign({}, current); next[id] = !current[id]; return next; }); }
-        function onGithubExpansionKey(e) { if (e.key === "Enter" || e.key === " ") toggleGithubExpansion(e); }
         // Vertically center the text block: 2 lines when not wrapping, 3 lines when wrapping.
         var titleY = wrapMeta ? NODE_H / 2 - 12 : NODE_H / 2 - 4;
         var line2Y = titleY + 18;
@@ -1888,14 +1790,10 @@
             h("text", { x: 36, y: titleY, fill: fg, fontSize: 13, fontWeight: 600 }, title),
             h("text", { x: 36, y: line2Y, fontSize: 10.5 },
               h("tspan", { fill: dm.dot, fontWeight: 600 }, dm.label),
-              depBlk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, waiting) : null,
+              depBlk ? h("tspan", { fill: BLOCK_COL, fontWeight: 600 }, "  \u00b7  waiting on a parent") : null,
               (rest && !wrapMeta) ? h("tspan", { fill: "currentColor", opacity: 0.55 }, rest) : null),
             wrapMeta ? h("text", { x: 36, y: line3Y, fontSize: 10.5 },
-              h("tspan", { fill: "currentColor", opacity: 0.55 }, rest.replace(/^\s*\u00b7\s*/, ""))) : null),
-          expansion ? h("g", { role: "button", tabIndex: 0, "aria-label": expansionLabel, "aria-pressed": expanded, onClick: toggleGithubExpansion, onKeyDown: onGithubExpansionKey, style: { cursor: "pointer" } },
-            h("title", null, expansionLabel),
-            h("rect", { x: NODE_W - 58, y: NODE_H - 20, width: 52, height: 14, rx: 7, fill: cardBg, stroke: accent, strokeWidth: 1 }),
-            h("text", { x: NODE_W - 32, y: NODE_H - 10, textAnchor: "middle", fill: accent, fontSize: 8.5, fontWeight: 700 }, expanded ? "Hide path" : "Show path")) : null);
+              h("tspan", { fill: "currentColor", opacity: 0.55 }, rest.replace(/^\s*\u00b7\s*/, ""))) : null));
       });
       return h("svg", { width: gm.W, height: gm.H, viewBox: "0 0 " + gm.W + " " + gm.H, style: { display: "block" } },
         h("defs", null,
@@ -1907,8 +1805,8 @@
     // The blocked tasks in this graph, left-to-right, for the ◀/▶ jump nav.
     var blockedIds = useMemo(function () {
       if (!graphModel || !graphModel.ids) return [];
-      var par = graphModel.par, pos = graphModel.pos, dependencyParents = graphModel.dependencyParents;
-      function blk(id) { var t = taskById[id]; if (!t) return false; if (t.status === "blocked") return true; if (t.status === "done") return false; var ps = dependencyParents[id] || par[id]; if (!ps || !ps.length) return false; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return true; } return false; }
+      var par = graphModel.par, pos = graphModel.pos;
+      function blk(id) { var t = taskById[id]; if (!t) return false; if (t.status === "blocked") return true; if (t.status === "done") return false; var ps = par[id]; if (!ps || !ps.length) return false; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return true; } return false; }
       var out = graphModel.ids.filter(blk);
       out.sort(function (a, b) { var pa = pos[a] || { x: 0, y: 0 }, pb = pos[b] || { x: 0, y: 0 }; return (pa.x - pb.x) || (pa.y - pb.y); });
       return out;
@@ -2023,20 +1921,10 @@
       var hideDoneToggle = h("label", { title: "Hide tasks whose whole chain (itself, all parents and all children) is done", style: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, color: muted, cursor: "pointer", userSelect: "none" } },
         h("span", { className: "tl-switch" }, h("input", { type: "checkbox", checked: hideDoneChains, onChange: function (e) { setHideDoneChains(e.target.checked); } }), h("span", { className: "tl-slider" })),
         "Hide done chains");
-      var hideGithubToggle = h("label", { title: "Hide PR-review and GitHub auto-merge pipeline stages in this graph", style: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, color: muted, cursor: "pointer", userSelect: "none" } },
-        h("span", { className: "tl-switch" }, h("input", { type: "checkbox", checked: hideGithubStages, onChange: function (e) { setHideGithubStages(e.target.checked); } }), h("span", { className: "tl-slider" })),
-        "Hide GitHub stages");
-      var emptyMsg = hideDoneChains && hideGithubStages
-        ? "No visible tasks to graph. Turn off \u201cHide done chains\u201d or \u201cHide GitHub stages\u201d to show them."
-        : (hideDoneChains
-          ? "No tasks to graph \u2014 every task in this scope is a fully-done chain. Turn off \u201cHide done chains\u201d to see them."
-          : (hideGithubStages
-            ? "No visible tasks to graph. Turn off \u201cHide GitHub stages\u201d to show PR reviews and auto-merges."
-            : "No tasks to graph in this scope."));
       if (empty) {
         return h("div", null,
-          h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } }, hideDoneToggle, hideGithubToggle),
-          h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : emptyMsg));
+          h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } }, hideDoneToggle),
+          h("div", { style: { fontSize: 13, color: muted, border: "1px dashed " + borderC, borderRadius: 8, padding: "40px 24px", textAlign: "center" } }, loading ? "Loading\u2026" : (hideDoneChains ? "No tasks to graph \u2014 every task in this scope is a fully-done chain. Turn off \u201cHide done chains\u201d to see them." : "No tasks to graph in this scope.")));
       }
       function zBtn(lbl, fn, title) { return h("button", { onClick: fn, title: title, style: { background: bgMuted, color: "inherit", border: "1px solid " + borderC, borderRadius: 7, width: 30, height: 28, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" } }, lbl); }
       function legendDot(c, lbl) { return h("span", { style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: muted } }, h("span", { style: { width: 9, height: 9, borderRadius: 3, background: "transparent", border: "2px solid " + c } }), lbl); }
@@ -2055,7 +1943,6 @@
         h("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
           blockNavEl),
         hideDoneToggle,
-        hideGithubToggle,
         h("span", { style: { fontSize: 11.5, color: muted } }, "Scroll / pinch to zoom \u00b7 drag (or hold Space) to pan \u00b7 \u26f6 fit \u00b7 click a task to open"));
       return h("div", null, controls,
         h("div", { ref: viewportRef, onMouseDown: onGraphDown, className: (panning ? "tl-panning" : (spaceHeld ? "tl-space" : "")), style: { position: "relative", overflow: "hidden", border: "1px solid " + borderC, borderRadius: 10, background: bgMuted, height: "calc(100vh - 250px)", cursor: panning ? "grabbing" : "grab", touchAction: "none", userSelect: "none" } },
