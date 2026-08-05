@@ -1263,6 +1263,7 @@
       }).catch(function () {});
     }
     function descendantsOf(rootId) { var out = []; var seen = {}; var stack = (edges.children[rootId] || []).slice(); while (stack.length) { var c = stack.pop(); if (seen[c]) continue; seen[c] = 1; out.push(c); var g = edges.children[c] || []; for (var i = 0; i < g.length; i++) stack.push(g[i]); } return out; }
+    function descendantProgress(t) { var ids = descendantsOf(t.id); if (!ids.length) return (t.progress && t.progress.total > 0) ? t.progress : null; var done = 0, total = 0; ids.forEach(function (id) { var descendant = taskById[id]; if (!descendant) return; total++; if (descendant.status === "done") done++; }); return total ? { done: done, total: total } : ((t.progress && t.progress.total > 0) ? t.progress : null); }
 
     // ---- sections -----------------------------------------------------------
     var sections = useMemo(function () {
@@ -1384,7 +1385,7 @@
 
     function taskRow(t, depth) {
       depth = depth || 0;
-      var pri = priorityBucket(t.priority); var prog = t.progress;
+      var pri = priorityBucket(t.priority); var prog = descendantProgress(t);
       var kids = hasKids(t);
       var expanded = !!expandedTasks[t.id];
       var disc = kids
