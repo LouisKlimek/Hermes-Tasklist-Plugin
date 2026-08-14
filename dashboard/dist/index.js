@@ -472,7 +472,7 @@
       menu = null;
     }
     return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block", minWidth: 0, maxWidth: "100%", width: opts.full ? "100%" : undefined } },
-      h("button", { ref: btnRef, type: "button", onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
+      h("button", { ref: btnRef, type: "button", "aria-label": opts.title || undefined, title: opts.title || undefined, onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
         cur && cur.dot ? Dot(cur.dot, 9) : null,
         h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, cur ? cur.label : String(value || "")),
         h("span", { style: { display: "inline-flex", color: muted, flex: "0 0 auto" } }, Caret(false, 10))),
@@ -811,9 +811,15 @@
       setNotice(null);
       var defStatus = (settableStatuses.indexOf("todo") !== -1 ? "todo" : (settableStatuses[0] || "todo"));
       var initStatus = (presetStatus && settableStatuses.indexOf(presetStatus) !== -1) ? presetStatus : defStatus;
-      var init = { title: "", status: initStatus, priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", files: [], parents: [], children: [] };
+      var init = { title: "", status: initStatus, priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", predecessor_id: "", predecessor_candidates: null, files: [], parents: [], children: [] };
       draftInit.current = JSON.stringify(init);
       setDraft(init); setConfirmClose(false); setCreating(true);
+      // The backend checks the active profile's watcher before reading any board
+      // cards; an unavailable or absent watcher simply leaves the dialog intact.
+      getJSON(TLAPI + "/sequence-predecessors" + tlq(board)).then(function (r) {
+        if (!r || !r.enabled) return;
+        setDraft(function (current) { return current ? Object.assign({}, current, { predecessor_candidates: (r.candidates || []) }) : current; });
+      }).catch(function () {});
     }
     function closeCreate() { setCreating(false); setDraft(null); setSavingNew(false); setConfirmClose(false); }
     function requestClose() {
@@ -837,7 +843,8 @@
         if (d.status && d.status !== "triage" && settableStatuses.indexOf(d.status) !== -1) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { status: d.status }); }).catch(function () {});
         var pr = parseInt(d.priority, 10); if (!isNaN(pr)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { priority: pr }); }).catch(function () {});
         if (d.assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { assignee: d.assignee }); }).catch(function () {});
-        if (d.body && d.body.trim()) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { body: d.body }); }).catch(function () {});
+        var createBody = d.predecessor_id ? "Predecessor GitHub Auto Merge: " + d.predecessor_id + "\n\n" + d.body : d.body;
+        if (createBody && createBody.trim()) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { body: createBody }); }).catch(function () {});
 
         if (d.files && d.files.length) { d.files.forEach(function (f) { chain = chain.then(function () { var fd = new FormData(); fd.append("file", f); return authFetch(KAPI + "/tasks/" + encodeURIComponent(id) + "/attachments" + bq(), { method: "POST", body: fd }); }).catch(function () {}); }); }
         if (d.parents && d.parents.length) { d.parents.forEach(function (pid) { chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: pid, child_id: id }); }).catch(function () {}); }); }
@@ -2020,6 +2027,7 @@
           cfield("Priority", h(DotSelect, { value: draft.priority, options: prioOpts2, onChange: function (v) { upd({ priority: v }); }, opts: { full: true, lg: true } })),
           cfield("Assignee", h(DotSelect, { value: draft.assignee, options: asgOpts2, onChange: function (v) { upd({ assignee: v }); }, opts: { full: true, lg: true, search: true } })),
           cfield("List", h(DotSelect, { value: draft.list_id, options: listOpts, onChange: function (v) { upd({ list_id: v }); }, opts: { full: true, lg: true, search: true, onCreate: function (name) { return createListReturning(name, board); } } }))),
+          draft.predecessor_candidates ? cfield("Predecessor GitHub Auto Merge", h(DotSelect, { value: draft.predecessor_id, options: [{ value: "", label: "No predecessor" }].concat(draft.predecessor_candidates.map(function (candidate) { return { value: candidate.id, label: (candidate.title || "Untitled task") + "  ·  " + candidate.id }; })), onChange: function (v) { upd({ predecessor_id: v }); }, opts: { full: true, lg: true, search: true, title: "Choose predecessor GitHub Auto Merge task" } })) : null,
         h("div", { style: { height: 22 } }),
         cfield("Description", h("textarea", { value: draft.body, onChange: function (e) { upd({ body: e.target.value }); }, placeholder: "Add a description\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
         h("div", { style: { height: 22 } }),

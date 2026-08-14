@@ -12,6 +12,7 @@ The dashboard imports this module and mounts ``router`` at
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -112,6 +113,47 @@ def _kanban_db_path(slug: Optional[str]) -> Optional[Path]:
     return home / "kanban.db"
 
 
+_SEQUENCE_WATCHER_NAME = "kanban-global-sequence-release-watcher"
+_AUTO_MERGE_TYPE = re.compile(r"(?:^|\n)Type:\s*GitHub Auto Merge\s*(?:\n|$)")
+
+
+def _sequence_watcher_installed() -> bool:
+    """Return whether this active Hermes profile opted into sequenced releases."""
+    try:
+        with (_hermes_home() / "cron" / "jobs.json").open("r", encoding="utf-8-sig") as f:
+            raw = json.load(f)
+        jobs = raw.get("jobs", []) if isinstance(raw, dict) else raw
+        return isinstance(jobs, list) and any(
+            isinstance(job, dict) and job.get("name") == _SEQUENCE_WATCHER_NAME
+            for job in jobs
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def _sequence_predecessors(slug: Optional[str]) -> List[dict]:
+    """Read valid merge-card predecessors without exposing the board DB to JS."""
+    path = _kanban_db_path(slug)
+    if path is None or not path.exists():
+        return []
+    try:
+        kc = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        kc.row_factory = sqlite3.Row
+        try:
+            rows = kc.execute(
+                "SELECT id, title, body, created_at FROM tasks ORDER BY created_at DESC"
+            )
+            return [
+                {"id": row["id"], "title": row["title"] or "", "created_at": row["created_at"]}
+                for row in rows
+                if _AUTO_MERGE_TYPE.search(row["body"] or "")
+            ]
+        finally:
+            kc.close()
+    except sqlite3.Error:
+        return []
+
+
 # --------------------------------------------------------------------------- #
 # request models
 # --------------------------------------------------------------------------- #
@@ -140,6 +182,14 @@ class TitleProvenanceBody(BaseModel):
 # --------------------------------------------------------------------------- #
 # routes  (mounted at /api/plugins/tasklist/)
 # --------------------------------------------------------------------------- #
+@router.get("/sequence-predecessors")
+def sequence_predecessors(board: Optional[str] = Query(None)):
+    """Return merge-card candidates only when this profile enables the watcher."""
+    if not _sequence_watcher_installed():
+        return {"enabled": False, "candidates": []}
+    return {"enabled": True, "candidates": _sequence_predecessors(_board(board))}
+
+
 @router.get("/lists")
 def get_lists(board: Optional[str] = Query(None)):
     """Return the board's lists plus the task_id -> list_id map."""
