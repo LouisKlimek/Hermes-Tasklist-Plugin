@@ -84,8 +84,17 @@ def test_dialog_uses_searchable_control_and_exact_optional_description_prefix():
     assert "{ body: createBody }" in ui
 
 
+def test_dialog_forces_and_explains_blocked_status_with_predecessor():
+    ui = UI_PATH.read_text()
+    assert 'var forcedStatus = d.predecessor_id ? "blocked" : d.status;' in ui
+    assert 'value: predecessorSelected ? "blocked" : draft.status' in ui
+    assert 'disabled: predecessorSelected' in ui
+    assert 'Status is locked to blocked until the predecessor dependency is resolved.' in ui
+
+
 if __name__ == "__main__":
     test_watcher_absent_hides_control_without_loading_candidates()
     test_watcher_present_returns_only_newest_merge_cards()
     test_dialog_uses_searchable_control_and_exact_optional_description_prefix()
-    print("sequence predecessor contract: 10 assertions passed")
+    test_dialog_forces_and_explains_blocked_status_with_predecessor()
+    print("sequence predecessor contract: 14 assertions passed")
