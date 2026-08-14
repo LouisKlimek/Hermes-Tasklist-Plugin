@@ -426,6 +426,7 @@
       return function () { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", onScroll); };
     }, [open, mobile]);
     function toggle() {
+      if (opts.disabled) return;
       if (open) { setOpen(false); return; }
       if (!mobile) {
         var r = btnRef.current ? btnRef.current.getBoundingClientRect() : null;
@@ -472,7 +473,7 @@
       menu = null;
     }
     return h("span", { ref: ref, onClick: function (e) { e.stopPropagation(); }, style: { position: "relative", display: opts.full ? "block" : "inline-block", minWidth: 0, maxWidth: "100%", width: opts.full ? "100%" : undefined } },
-      h("button", { ref: btnRef, type: "button", "aria-label": opts.title || undefined, title: opts.title || undefined, onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: "pointer", textAlign: "left", overflow: "hidden" } },
+      h("button", { ref: btnRef, type: "button", disabled: opts.disabled, "aria-label": opts.title || undefined, title: opts.title || undefined, onClick: toggle, className: "font-courier", style: { display: "flex", alignItems: "center", gap: 7, width: opts.full ? "100%" : undefined, maxWidth: opts.maxWidth || undefined, background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: opts.pill ? 999 : 8, padding: opts.lg ? "8px 11px" : (opts.pill ? "3px 9px" : "5px 9px"), fontSize: opts.lg ? 13 : (opts.small ? 11 : 12), cursor: opts.disabled ? "not-allowed" : "pointer", opacity: opts.disabled ? .6 : 1, textAlign: "left", overflow: "hidden" } },
         cur && cur.dot ? Dot(cur.dot, 9) : null,
         h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, cur ? cur.label : String(value || "")),
         h("span", { style: { display: "inline-flex", color: muted, flex: "0 0 auto" } }, Caret(false, 10))),
@@ -840,7 +841,8 @@
         var chain = Promise.resolve();
         if (d.list_id) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: id, list_id: d.list_id }); });
         chain = chain.then(function () { var canonical = canonicalTaskTitle(title, d.list_id); return canonical !== title ? send("PATCH", tp + encodeURIComponent(id) + bq(), { title: canonical }) : null; }).then(function () { return setTitleProvenance(id, d.list_id); });
-        if (d.status && d.status !== "triage" && settableStatuses.indexOf(d.status) !== -1) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { status: d.status }); }).catch(function () {});
+        var forcedStatus = d.predecessor_id ? "blocked" : d.status;
+        if (forcedStatus && forcedStatus !== "triage" && settableStatuses.indexOf(forcedStatus) !== -1) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { status: forcedStatus }); }).catch(function () {});
         var pr = parseInt(d.priority, 10); if (!isNaN(pr)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { priority: pr }); }).catch(function () {});
         if (d.assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { assignee: d.assignee }); }).catch(function () {});
         var createBody = d.predecessor_id ? "Predecessor GitHub Auto Merge: " + d.predecessor_id + "\n\n" + d.body : d.body;
@@ -2009,6 +2011,7 @@
       if (!creating || !draft) return null;
       function upd(patch) { setDraft(Object.assign({}, draft, patch)); }
       function cfield(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
+      var predecessorSelected = !!draft.predecessor_id;
       var statusOpts2 = settableStatuses.map(function (st) { return { value: st, label: statusMeta(st).label, dot: statusMeta(st).dot }; });
       var prioOpts2 = [{ value: "3", label: "Urgent" }, { value: "2", label: "High" }, { value: "1", label: "Normal" }, { value: "0", label: "Low" }].map(function (o) { var n = parseInt(o.value, 10); return { value: o.value, label: o.label, dot: priorityBucket(n).color }; });
       var asgOpts2 = [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; }));
@@ -2023,7 +2026,9 @@
         cfield("Title", h("input", { autoFocus: true, value: draft.title, onChange: function (e) { upd({ title: e.target.value }); }, onKeyDown: function (e) { if (e.key === "Enter") { e.preventDefault(); submitCreate(); } }, placeholder: "What needs to be done?", className: "font-courier", style: { width: "100%", boxSizing: "border-box", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "10px 12px", fontSize: 15, fontWeight: 600 } })),
         h("div", { style: { height: 22 } }),
         h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "22px 32px" } },
-          cfield("Status", h(DotSelect, { value: draft.status, options: statusOpts2, onChange: function (v) { upd({ status: v }); }, opts: { full: true, lg: true } })),
+          cfield("Status", h("div", { style: { opacity: predecessorSelected ? .6 : 1 } },
+            h(DotSelect, { value: predecessorSelected ? "blocked" : draft.status, options: statusOpts2, onChange: function (v) { if (!predecessorSelected) upd({ status: v }); }, opts: { full: true, lg: true, disabled: predecessorSelected, title: predecessorSelected ? "Status locked by predecessor dependency" : undefined } }),
+            predecessorSelected ? h("div", { style: { marginTop: 7, fontSize: 11.5, lineHeight: 1.4, color: muted } }, "Status is locked to blocked until the predecessor dependency is resolved.") : null)),
           cfield("Priority", h(DotSelect, { value: draft.priority, options: prioOpts2, onChange: function (v) { upd({ priority: v }); }, opts: { full: true, lg: true } })),
           cfield("Assignee", h(DotSelect, { value: draft.assignee, options: asgOpts2, onChange: function (v) { upd({ assignee: v }); }, opts: { full: true, lg: true, search: true } })),
           cfield("List", h(DotSelect, { value: draft.list_id, options: listOpts, onChange: function (v) { upd({ list_id: v }); }, opts: { full: true, lg: true, search: true, onCreate: function (name) { return createListReturning(name, board); } } }))),
