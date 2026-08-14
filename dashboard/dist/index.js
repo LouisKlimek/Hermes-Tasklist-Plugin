@@ -1264,21 +1264,22 @@
       }).catch(function () {});
     }
     function descendantsOf(rootId) { var out = []; var seen = {}; var stack = (edges.children[rootId] || []).slice(); while (stack.length) { var c = stack.pop(); if (seen[c]) continue; seen[c] = 1; out.push(c); var g = edges.children[c] || []; for (var i = 0; i < g.length; i++) stack.push(g[i]); } return out; }
-    // Walk descendants depth-first without recursion so malformed cyclic links cannot
-    // loop forever. Children use childrenOf's existing priority-desc/created-asc order;
-    // pushing that order in reverse makes the first candidate at a tied max depth win.
+    // Walk descendants depth-first without recursion. Each entry carries only its
+    // ancestor IDs: this prevents cycles but lets a shared descendant be evaluated
+    // again through a deeper valid path. Children use childrenOf's existing
+    // priority-desc/created-asc order; reverse pushing makes tied depths deterministic.
     function deepestOpenFollowupTarget(root) {
       if (!root) return root;
-      var best = root, bestDepth = 0, seen = {}; seen[root.id] = 1;
-      var stack = [];
-      function pushChildren(parent, depth) { var kids = childrenOf(parent); for (var i = kids.length - 1; i >= 0; i--) stack.push({ task: kids[i], depth: depth }); }
-      pushChildren(root, 1);
+      var best = root, bestDepth = 0, stack = [];
+      function pushChildren(parent, depth, ancestors) { var kids = childrenOf(parent); for (var i = kids.length - 1; i >= 0; i--) stack.push({ task: kids[i], depth: depth, ancestors: ancestors }); }
+      var rootAncestors = {}; rootAncestors[root.id] = 1;
+      pushChildren(root, 1, rootAncestors);
       while (stack.length) {
         var entry = stack.pop(), candidate = entry.task;
-        if (!candidate || seen[candidate.id]) continue;
-        seen[candidate.id] = 1;
+        if (!candidate || entry.ancestors[candidate.id]) continue;
         if (candidate.status !== "done" && entry.depth > bestDepth) { best = candidate; bestDepth = entry.depth; }
-        pushChildren(candidate, entry.depth + 1);
+        var ancestors = {}; for (var id in entry.ancestors) ancestors[id] = 1; ancestors[candidate.id] = 1;
+        pushChildren(candidate, entry.depth + 1, ancestors);
       }
       return best;
     }

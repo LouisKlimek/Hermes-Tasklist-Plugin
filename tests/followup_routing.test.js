@@ -12,33 +12,15 @@ assert(source.includes('type: "checkbox"'), "follow-up dialog must expose a rout
 assert(source.includes("var target = followup.routeToDeepestOpen !== false ? deepestOpenFollowupTarget(src) : src;"), "disabled routing must preserve the selected task");
 assert(source.includes("{ parent_id: target.id, child_id: newId }"), "follow-up link must use the selected target");
 
-assert(selection[0].includes("seen[root.id] = 1"), "selection must not revisit the root in a cycle");
+assert(selection[0].includes("entry.ancestors[candidate.id]"), "selection must prevent only ancestor cycles");
+assert(selection[0].includes("var ancestors = {}; for (var id in entry.ancestors)"), "each path must carry independent cycle state");
 assert(selection[0].includes("candidate.status !== \"done\" && entry.depth > bestDepth"), "only deeper open descendants may replace the target");
 assert(selection[0].includes("for (var i = kids.length - 1; i >= 0; i--)"), "existing child order must define deterministic ties");
 
 let tree = {};
 function childrenOf(task) { return (tree[task.id] || []).slice(); }
-function select(root) {
-  if (!root) return root;
-  let best = root;
-  let bestDepth = 0;
-  const seen = { [root.id]: true };
-  const stack = [];
-  function pushChildren(parent, depth) {
-    const kids = childrenOf(parent);
-    for (let i = kids.length - 1; i >= 0; i--) stack.push({ task: kids[i], depth });
-  }
-  pushChildren(root, 1);
-  while (stack.length) {
-    const entry = stack.pop();
-    const candidate = entry.task;
-    if (!candidate || seen[candidate.id]) continue;
-    seen[candidate.id] = true;
-    if (candidate.status !== "done" && entry.depth > bestDepth) { best = candidate; bestDepth = entry.depth; }
-    pushChildren(candidate, entry.depth + 1);
-  }
-  return best;
-}
+const helperSource = selection[0].replace(/\n    function descendantProgress[\s\S]*/, "");
+const select = Function("childrenOf", `${helperSource}\nreturn deepestOpenFollowupTarget;`)(childrenOf);
 const task = (id, status) => ({ id, status });
 
 const root = task("root", "done");
@@ -62,4 +44,8 @@ assert.strictEqual(select(root), root, "a task without children falls back to it
 tree = { root: [a], a: [root] };
 assert.strictEqual(select(root), a, "cyclic child data terminates and chooses a safe open target");
 
-console.log("follow-up routing contract: 13 assertions passed");
+const shared = task("shared", "todo");
+tree = { root: [a, b], a: [shared], b: [b1], b1: [shared] };
+assert.strictEqual(select(root), shared, "a shared descendant is reconsidered through its deeper valid path");
+
+console.log("follow-up routing contract: 14 assertions passed");
