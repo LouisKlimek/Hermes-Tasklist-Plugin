@@ -569,7 +569,7 @@
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
     s = useState(false); var confirmClose = s[0], setConfirmClose = s[1];
     var draftInit = useRef(null);
-    s = useState(null); var followup = s[0], setFollowup = s[1];   // { srcTask, feedback, files, assignee, priority } for the "Create follow-up from feedback" popup
+    s = useState(null); var followup = s[0], setFollowup = s[1];   // { srcTask, feedback, files, assignee, priority, routeToDeepestOpen } for the "Create follow-up from feedback" popup
     s = useState(false); var savingFollowup = s[0], setSavingFollowup = s[1];
     useEffect(function () { setModalTab("details"); setConfirmDel(null); setConfirmArchive(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
@@ -867,13 +867,14 @@
       // Make sure we have the freshest detail (body) for prefill.
       loadDetail(src.id, false);
       // Default the assignee to the same one as the source task we're leaving feedback on.
-      setFollowup({ srcTask: src, feedback: "", files: [], uploadError: "", assignee: (src.assignee || ""), priority: "1" });
+      setFollowup({ srcTask: src, feedback: "", files: [], uploadError: "", assignee: (src.assignee || ""), priority: "1", routeToDeepestOpen: true });
       setSavingFollowup(false);
     }
     function closeFollowup() { setFollowup(null); setSavingFollowup(false); }
     function submitFollowup() {
       if (!followup || savingFollowup) return;
       var src = followup.srcTask; if (!src) return;
+      var target = followup.routeToDeepestOpen !== false ? deepestOpenFollowupTarget(src) : src;
       var feedback = (followup.feedback || "").trim();
       if (!feedback) { setNotice("Please enter the feedback for the follow-up."); return; }
       setSavingFollowup(true); setNotice(null);
@@ -906,11 +907,11 @@
         if (!isNaN(prio)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { priority: prio }); }).catch(function () {});
         if (assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { assignee: assignee }); }).catch(function () {});
         chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(newId) + bq(), { body: body }); }).catch(function () {});
-        // Keep the follow-up in the same list as the source task, when known.
-        var lid = activeMembership[src.id];
+        // Keep the follow-up in the selected target's list, when known.
+        var lid = activeMembership[target.id];
         if (lid && liveListIds[lid]) chain = chain.then(function () { return send("PUT", TLAPI + "/membership" + tlq(board), { task_id: newId, list_id: lid }); }).catch(function () {});
-        // Parent link: the new follow-up is a child of the original task.
-        chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: src.id, child_id: newId }); }).catch(function () {});
+        // Parent link: the follow-up is a child of the selected target.
+        chain = chain.then(function () { return send("POST", KAPI + "/links" + bq(), { parent_id: target.id, child_id: newId }); }).catch(function () {});
         // Reuse the host's authenticated attachment endpoint. It owns authorization,
         // CSRF, validation, storage, and retention; this plugin adds none of those.
         files.forEach(function (file) {
@@ -1263,6 +1264,24 @@
       }).catch(function () {});
     }
     function descendantsOf(rootId) { var out = []; var seen = {}; var stack = (edges.children[rootId] || []).slice(); while (stack.length) { var c = stack.pop(); if (seen[c]) continue; seen[c] = 1; out.push(c); var g = edges.children[c] || []; for (var i = 0; i < g.length; i++) stack.push(g[i]); } return out; }
+    // Walk descendants depth-first without recursion so malformed cyclic links cannot
+    // loop forever. Children use childrenOf's existing priority-desc/created-asc order;
+    // pushing that order in reverse makes the first candidate at a tied max depth win.
+    function deepestOpenFollowupTarget(root) {
+      if (!root) return root;
+      var best = root, bestDepth = 0, seen = {}; seen[root.id] = 1;
+      var stack = [];
+      function pushChildren(parent, depth) { var kids = childrenOf(parent); for (var i = kids.length - 1; i >= 0; i--) stack.push({ task: kids[i], depth: depth }); }
+      pushChildren(root, 1);
+      while (stack.length) {
+        var entry = stack.pop(), candidate = entry.task;
+        if (!candidate || seen[candidate.id]) continue;
+        seen[candidate.id] = 1;
+        if (candidate.status !== "done" && entry.depth > bestDepth) { best = candidate; bestDepth = entry.depth; }
+        pushChildren(candidate, entry.depth + 1);
+      }
+      return best;
+    }
     function descendantProgress(t) { var ids = descendantsOf(t.id); if (!ids.length) return (t.progress && t.progress.total > 0) ? t.progress : null; var done = 0, total = 0; ids.forEach(function (id) { var descendant = taskById[id]; if (!descendant) return; total++; if (descendant.status === "done") done++; }); return total ? { done: done, total: total } : ((t.progress && t.progress.total > 0) ? t.progress : null); }
 
     // ---- sections -----------------------------------------------------------
@@ -2083,7 +2102,11 @@
 
       var body = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "16px" : "22px 26px" } },
         context,
-        ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted\u2026", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
+        ffield("Follow-up target", h("label", { style: { display: "flex", alignItems: "flex-start", gap: 9, cursor: savingFollowup ? "not-allowed" : "pointer", fontSize: 13, lineHeight: 1.45 } },
+          h("input", { type: "checkbox", checked: followup.routeToDeepestOpen !== false, disabled: savingFollowup, onChange: function (e) { upd({ routeToDeepestOpen: !!e.target.checked }); }, "aria-label": "Route follow-up to deepest open subtask" }),
+          h("span", null, "Route to the deepest open subtask", h("span", { style: { display: "block", color: muted, fontSize: 12, marginTop: 2 } }, "When disabled, the follow-up stays on the selected task.")))),
+        h("div", { style: { height: 14 } }),
+        ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted…", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
         h("div", { style: { height: 14 } }),
         ffield("Attachments", h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 9 } },
           h("input", { type: "file", multiple: true, "aria-label": "Add feedback attachments", disabled: savingFollowup, onChange: function (e) { var selected = Array.prototype.slice.call((e.target && e.target.files) || []); if (selected.length) upd({ files: (followup.files || []).concat(selected), uploadError: "" }); e.target.value = ""; } }),
