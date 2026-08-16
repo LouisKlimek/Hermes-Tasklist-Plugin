@@ -845,7 +845,7 @@
         if (forcedStatus && forcedStatus !== "triage" && settableStatuses.indexOf(forcedStatus) !== -1) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { status: forcedStatus }); }).catch(function () {});
         var pr = parseInt(d.priority, 10); if (!isNaN(pr)) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { priority: pr }); }).catch(function () {});
         if (d.assignee) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { assignee: d.assignee }); }).catch(function () {});
-        var createBody = d.predecessor_id ? "Predecessor GitHub Auto Merge: " + d.predecessor_id + "\n\n" + d.body : d.body;
+        var createBody = d.predecessor_id ? "Type: Sequenced Standalone Task\nPredecessor GitHub Auto Merge: " + d.predecessor_id + "\n\n" + d.body : d.body;
         if (createBody && createBody.trim()) chain = chain.then(function () { return send("PATCH", tp + encodeURIComponent(id) + bq(), { body: createBody }); }).catch(function () {});
 
         if (d.files && d.files.length) { d.files.forEach(function (f) { chain = chain.then(function () { var fd = new FormData(); fd.append("file", f); return authFetch(KAPI + "/tasks/" + encodeURIComponent(id) + "/attachments" + bq(), { method: "POST", body: fd }); }).catch(function () {}); }); }
