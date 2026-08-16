@@ -80,7 +80,10 @@ def test_dialog_uses_searchable_control_and_exact_optional_description_prefix():
     assert 'cfield("Predecessor GitHub Auto Merge"' in ui
     assert "predecessor_candidates ?" in ui and "search: true" in ui
     assert 'title: "Choose predecessor GitHub Auto Merge task"' in ui
-    assert '"Predecessor GitHub Auto Merge: " + d.predecessor_id + "\\n\\n" + d.body' in ui
+    expected_selected_body = r'"Type: Sequenced Standalone Task\nPredecessor GitHub Auto Merge: " + d.predecessor_id + "\n\n" + d.body'
+    assert expected_selected_body in ui
+    assert '"Repository: " + d.' not in ui
+    assert ' : d.body;' in ui
     assert "{ body: createBody }" in ui
 
 
