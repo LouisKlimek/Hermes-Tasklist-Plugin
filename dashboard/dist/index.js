@@ -225,7 +225,15 @@
   function mdBlocks(md, onOpen) {
     var lines = String(md == null ? "" : md).replace(/\r\n?/g, "\n").split("\n");
     var blocks = [], i = 0, key = 0;
-    function para(buf) { if (buf.length) blocks.push(h("p", { key: "p" + (key++), style: { margin: "0 0 10px", lineHeight: 1.65 } }, mdInline(buf.join(" "), onOpen))); }
+    function para(buf) {
+      if (!buf.length) return;
+      var content = [];
+      buf.forEach(function (line, index) {
+        if (index) content.push(h("br", { key: "br" + index }));
+        content.push(mdInline(line, onOpen));
+      });
+      blocks.push(h("p", { key: "p" + (key++), style: { margin: "0 0 10px", lineHeight: 1.65 } }, content));
+    }
     while (i < lines.length) {
       var line = lines[i];
       var fence = /^\s*```/.test(line);
