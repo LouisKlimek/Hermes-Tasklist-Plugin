@@ -1283,21 +1283,35 @@
     function descendantsOf(rootId) { var out = []; var seen = {}; var stack = (edges.children[rootId] || []).slice(); while (stack.length) { var c = stack.pop(); if (seen[c]) continue; seen[c] = 1; out.push(c); var g = edges.children[c] || []; for (var i = 0; i < g.length; i++) stack.push(g[i]); } return out; }
     // Walk descendants depth-first without recursion. Each entry carries only its
     // ancestor IDs: this prevents cycles but lets a shared descendant be evaluated
-    // again through a deeper valid path. Children use childrenOf's existing
-    // priority-desc/created-asc order; reverse pushing makes tied depths deterministic.
+    // again through a deeper valid path. Malformed entries and cycles are skipped;
+    // no usable descendant falls back to the selected task.
     function deepestOpenFollowupTarget(root) {
-      if (!root) return root;
-      var best = root, bestDepth = 0, stack = [];
+      if (!root || !root.id) return root;
+      var deepest = [], maxDepth = 0, stack = [];
       function pushChildren(parent, depth, ancestors) { var kids = childrenOf(parent); for (var i = kids.length - 1; i >= 0; i--) stack.push({ task: kids[i], depth: depth, ancestors: ancestors }); }
+      function createdAt(task) {
+        var value = task && task.created_at, parsed;
+        if (typeof value === "number" && isFinite(value)) return value;
+        if (typeof value === "string") { parsed = Date.parse(value); if (!isNaN(parsed)) return parsed; parsed = parseFloat(value); if (!isNaN(parsed)) return parsed; }
+        return 0;
+      }
       var rootAncestors = {}; rootAncestors[root.id] = 1;
       pushChildren(root, 1, rootAncestors);
       while (stack.length) {
         var entry = stack.pop(), candidate = entry.task;
-        if (!candidate || entry.ancestors[candidate.id]) continue;
-        if (candidate.status !== "done" && entry.depth > bestDepth) { best = candidate; bestDepth = entry.depth; }
+        if (!candidate || !candidate.id || entry.ancestors[candidate.id]) continue;
+        if (entry.depth > maxDepth) { deepest = [candidate]; maxDepth = entry.depth; }
+        else if (entry.depth === maxDepth) deepest.push(candidate);
         var ancestors = {}; for (var id in entry.ancestors) ancestors[id] = 1; ancestors[candidate.id] = 1;
         pushChildren(candidate, entry.depth + 1, ancestors);
       }
+      if (!deepest.length) return root;
+      var preferred = deepest.filter(function (candidate) { return candidate.status !== "done"; });
+      var candidates = preferred.length ? preferred : deepest;
+      var best = candidates[0];
+      candidates.forEach(function (candidate) {
+        if (createdAt(candidate) > createdAt(best)) best = candidate;
+      });
       return best;
     }
     function descendantProgress(t) { var ids = descendantsOf(t.id); if (!ids.length) return (t.progress && t.progress.total > 0) ? t.progress : null; var done = 0, total = 0; ids.forEach(function (id) { var descendant = taskById[id]; if (!descendant) return; total++; if (descendant.status === "done") done++; }); return total ? { done: done, total: total } : ((t.progress && t.progress.total > 0) ? t.progress : null); }
@@ -2125,8 +2139,8 @@
       var body = h("div", { style: { flex: "1 1 auto", minWidth: 0, overflow: "auto", padding: isNarrow ? "16px" : "22px 26px" } },
         context,
         ffield("Follow-up target", h("label", { style: { display: "flex", alignItems: "flex-start", gap: 9, cursor: savingFollowup ? "not-allowed" : "pointer", fontSize: 13, lineHeight: 1.45 } },
-          h("input", { type: "checkbox", checked: followup.routeToDeepestOpen !== false, disabled: savingFollowup, onChange: function (e) { upd({ routeToDeepestOpen: !!e.target.checked }); }, "aria-label": "Route follow-up to deepest open subtask" }),
-          h("span", null, "Route to the deepest open subtask", h("span", { style: { display: "block", color: muted, fontSize: 12, marginTop: 2 } }, "When disabled, the follow-up stays on the selected task.")))),
+          h("input", { type: "checkbox", checked: followup.routeToDeepestOpen !== false, disabled: savingFollowup, onChange: function (e) { upd({ routeToDeepestOpen: !!e.target.checked }); }, "aria-label": "Route follow-up to deepest subtask" }),
+          h("span", null, "Route to the deepest subtask", h("span", { style: { display: "block", color: muted, fontSize: 12, marginTop: 2 } }, "When disabled, the follow-up stays on the selected task.")))),
         h("div", { style: { height: 14 } }),
         ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted…", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
         h("div", { style: { height: 14 } }),
