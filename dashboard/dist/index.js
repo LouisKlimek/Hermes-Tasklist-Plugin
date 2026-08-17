@@ -1794,9 +1794,8 @@
       function reach(start, adj) { var out = {}, st = (adj[start] || []).slice(); while (st.length) { var x = st.pop(); if (out[x]) continue; out[x] = 1; (adj[x] || []).forEach(function (n) { st.push(n); }); } return out; }
       var hi = null;
       if (graphHover && pos[graphHover]) { var anc = reach(graphHover, par), des = reach(graphHover, chi); hi = {}; hi[graphHover] = 1; Object.keys(anc).forEach(function (k) { hi[k] = 1; }); Object.keys(des).forEach(function (k) { hi[k] = 1; }); }
-      // A task's own status is the single source of truth. Separately, it's
-      // "dependency-blocked" when it isn't done yet but at least one parent isn't
-      // done — that's what the pulsing red outline flags.
+      // A task's own status is the single source of truth. A dependent task can
+      // wait on an unfinished parent, but that informational state is not blocked.
       function depBlocked(id) { var t = taskById[id]; if (!t || t.status === "done") return false; var ps = par[id]; if (!ps || !ps.length) return false; for (var i = 0; i < ps.length; i++) { var pt = taskById[ps[i]]; if (!pt || pt.status !== "done") return true; } return false; }
       var BLOCK_COL = "#ef4444";
       var NODE_W = gm.NODE_W, NODE_H = gm.NODE_H, fg = "currentColor";
@@ -1817,7 +1816,7 @@
         var t = taskById[id]; if (!t) return null; var p = pos[id];
         var dim = hi && !hi[id]; var hov = graphHover === id;
         var depBlk = depBlocked(id);                          // waiting on an unfinished parent
-        var isBlocked = depBlk || t.status === "blocked";      // emphasise either kind of block
+        var isBlocked = t.status === "blocked";                // only actual blocked tasks glow
         var dm = statusMeta(t.status); var title = String(taskTitle(t) || "Untitled"); if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "…";
         var np = (par[id] || []).length, nc = (chi[id] || []).length;
         var rest = (np ? "  \u00b7  " + np + " parent" + (np === 1 ? "" : "s") : "") + (nc ? "  \u00b7  " + nc + " child" + (nc === 1 ? "" : "ren") : "");
