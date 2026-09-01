@@ -888,6 +888,23 @@
       setSavingFollowup(false);
     }
     function closeFollowup() { setFollowup(null); setSavingFollowup(false); }
+    // Follow the selected task's parent chain to its oldest available root. The
+    // root's repository is authoritative; nearer parents must not override it.
+    function followupRootTask(src) {
+      if (!src || !src.id) return src;
+      var current = src, seen = {}, parents;
+      while (current && current.id && !seen[current.id]) {
+        seen[current.id] = 1;
+        parents = edges.parents[current.id] || [];
+        if (!parents.length || !taskById[parents[0]] || seen[parents[0]]) break;
+        current = taskById[parents[0]];
+      }
+      return current || src;
+    }
+    function followupRootRepository(src) {
+      var root = followupRootTask(src), match = root && root.body && String(root.body).match(/^Repository:\s*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\s*$/mi);
+      return match ? match[1] : "";
+    }
     function submitFollowup() {
       if (!followup || savingFollowup) return;
       var src = followup.srcTask; if (!src) return;
@@ -897,6 +914,7 @@
       setSavingFollowup(true); setNotice(null);
       var assignee = (followup.assignee || "").trim();
       var pr = extractPullRequest(src);
+      var repository = followupRootRepository(src);
       // Compact human title derived from the first line of the feedback.
       var firstLine = feedback.split(/\r?\n/)[0].trim();
       var shortTitle = firstLine.length > 70 ? (firstLine.slice(0, 67) + "\u2026") : firstLine;
@@ -908,6 +926,7 @@
         "Original Task:",
         src.id
       ];
+      if (repository) { bodyLines.push("", "Repository: " + repository); }
       if (pr) { bodyLines.push("", "Original Pull Request:", pr); }
       bodyLines.push("", "Feedback:", feedback);
       var body = bodyLines.join("\n");
