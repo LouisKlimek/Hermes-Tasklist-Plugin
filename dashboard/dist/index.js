@@ -576,10 +576,12 @@
     s = useState(false); var creating = s[0], setCreating = s[1];   // draft "new task" modal (nothing persisted until Create)
     s = useState(null); var draft = s[0], setDraft = s[1];
     s = useState(false); var savingNew = s[0], setSavingNew = s[1];
+    s = useState(false); var draftAttachmentsDragging = s[0], setDraftAttachmentsDragging = s[1];
     s = useState(false); var confirmClose = s[0], setConfirmClose = s[1];
     var draftInit = useRef(null);
     s = useState(null); var followup = s[0], setFollowup = s[1];   // { srcTask, feedback, files, assignee, priority, routeToDeepestOpen } for the "Create follow-up from feedback" popup
     s = useState(false); var savingFollowup = s[0], setSavingFollowup = s[1];
+    s = useState(false); var followupAttachmentsDragging = s[0], setFollowupAttachmentsDragging = s[1];
     useEffect(function () { setModalTab("details"); setConfirmDel(null); setConfirmArchive(null); }, [modalId]);
     s = useState({}); var detail = s[0], setDetail = s[1];
     s = useState(null); var notice = s[0], setNotice = s[1];
@@ -822,7 +824,7 @@
       var initStatus = (presetStatus && settableStatuses.indexOf(presetStatus) !== -1) ? presetStatus : defStatus;
       var init = { title: "", status: initStatus, priority: "1", assignee: "", list_id: (scope && scope.type === "list") ? scope.id : "", body: "", predecessor_id: "", predecessor_candidates: null, files: [], parents: [], children: [] };
       draftInit.current = JSON.stringify(init);
-      setDraft(init); setConfirmClose(false); setCreating(true);
+      setDraft(init); setDraftAttachmentsDragging(false); setConfirmClose(false); setCreating(true);
       // The backend checks the active profile's watcher before reading any board
       // cards; an unavailable or absent watcher simply leaves the dialog intact.
       getJSON(TLAPI + "/sequence-predecessors" + tlq(board)).then(function (r) {
@@ -830,7 +832,7 @@
         setDraft(function (current) { return current ? Object.assign({}, current, { predecessor_candidates: (r.candidates || []) }) : current; });
       }).catch(function () {});
     }
-    function closeCreate() { setCreating(false); setDraft(null); setSavingNew(false); setConfirmClose(false); }
+    function closeCreate() { setCreating(false); setDraft(null); setSavingNew(false); setDraftAttachmentsDragging(false); setConfirmClose(false); }
     function requestClose() {
       if (savingNew) return;
       var dirty = !!(draft && draftInit.current && JSON.stringify(draft) !== draftInit.current);
@@ -885,9 +887,9 @@
       loadDetail(src.id, false);
       // Default the assignee to the same one as the source task we're leaving feedback on.
       setFollowup({ srcTask: src, feedback: "", files: [], uploadError: "", assignee: (src.assignee || ""), priority: "1", routeToDeepestOpen: true });
-      setSavingFollowup(false);
+      setFollowupAttachmentsDragging(false); setSavingFollowup(false);
     }
-    function closeFollowup() { setFollowup(null); setSavingFollowup(false); }
+    function closeFollowup() { setFollowup(null); setFollowupAttachmentsDragging(false); setSavingFollowup(false); }
     // Follow the selected task's parent chain to its oldest available root. The
     // root's repository is authoritative; nearer parents must not override it.
     function followupRootTask(src) {
@@ -2050,6 +2052,9 @@
     function createModal() {
       if (!creating || !draft) return null;
       function upd(patch) { setDraft(Object.assign({}, draft, patch)); }
+      function addDraftFiles(files) { if (files.length) upd({ files: (draft.files || []).concat(files) }); }
+      function draggingFiles(e) { return !!(e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") !== -1); }
+      function leaveDraftAttachments(e) { if (!e.currentTarget.contains(e.relatedTarget)) setDraftAttachmentsDragging(false); }
       function cfield(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
       var predecessorSelected = !!draft.predecessor_id;
       var statusOpts2 = settableStatuses.map(function (st) { return { value: st, label: statusMeta(st).label, dot: statusMeta(st).dot }; });
@@ -2099,10 +2104,10 @@
               h(DotSelect, { value: "", options: depOpts("\u2014 add child \u2014"), onChange: function (v) { if (v) upd({ children: dChildren.concat([v]) }); }, opts: { maxWidth: "240px", search: true, title: "Add child" } }))));
         })(),
         h("div", { style: { height: 22 } }),
-        cfield("Attachments", h("div", null,
+        cfield("Attachments", h("div", { "aria-label": "Add task attachments", onDragEnter: function (e) { if (draggingFiles(e)) { e.preventDefault(); setDraftAttachmentsDragging(true); } }, onDragOver: function (e) { if (draggingFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDraftAttachmentsDragging(true); } }, onDragLeave: leaveDraftAttachments, onDrop: function (e) { if (!draggingFiles(e)) return; e.preventDefault(); e.stopPropagation(); setDraftAttachmentsDragging(false); addDraftFiles(Array.prototype.slice.call(e.dataTransfer.files || [])); }, style: { padding: 8, borderRadius: 9, border: "1px dashed " + (draftAttachmentsDragging ? accent : borderC), background: draftAttachmentsDragging ? bgMuted : "transparent", boxShadow: draftAttachmentsDragging ? "0 0 0 2px " + accent + "33" : "none", transition: "background .12s ease, border-color .12s ease, box-shadow .12s ease" } },
           h("label", { style: { display: "inline-flex", alignItems: "center", gap: 7, background: "transparent", color: "inherit", border: "1px dashed " + borderC, borderRadius: 8, padding: "9px 14px", fontSize: 12.5, cursor: "pointer" } },
             PlusIcon(13), "Add files",
-            h("input", { type: "file", multiple: true, onChange: function (e) { var fs = Array.prototype.slice.call(e.target.files || []); if (fs.length) upd({ files: (draft.files || []).concat(fs) }); e.target.value = ""; }, style: { display: "none" } })),
+            h("input", { type: "file", multiple: true, onChange: function (e) { addDraftFiles(Array.prototype.slice.call(e.target.files || [])); e.target.value = ""; }, style: { display: "none" } })),
           (draft.files && draft.files.length) ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginTop: 10 } }, draft.files.map(function (f, i) {
             return h("div", { key: i + ":" + f.name, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, background: bgMuted, borderRadius: 6, padding: "6px 10px" } },
               h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
@@ -2135,6 +2140,9 @@
       if (!followup) return null;
       var src = followup.srcTask; if (!src) return null;
       function upd(patch) { setFollowup(Object.assign({}, followup, patch)); }
+      function addFollowupFiles(files) { if (files.length) upd({ files: (followup.files || []).concat(files), uploadError: "" }); }
+      function draggingFiles(e) { return !!(e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") !== -1); }
+      function leaveFollowupAttachments(e) { if (!e.currentTarget.contains(e.relatedTarget)) setFollowupAttachmentsDragging(false); }
       function ffield(lbl, ctrl) { return h("div", { style: { display: "flex", flexDirection: "column", gap: 7, minWidth: 0 } }, h("span", { style: { fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: muted, fontWeight: 600 } }, lbl), ctrl); }
       // Assignee options mirror the "New task" popup: every board profile, with search.
       var asgOptsF = [{ value: "", label: "Unassigned" }].concat(assigneeChoices.map(function (x) { return { value: x, label: x }; }));
@@ -2162,8 +2170,8 @@
         h("div", { style: { height: 14 } }),
         ffield("Feedback", h("textarea", { autoFocus: true, value: followup.feedback, onChange: function (e) { upd({ feedback: e.target.value }); }, placeholder: "Describe what should be adjusted…", className: "font-courier", style: { width: "100%", boxSizing: "border-box", minHeight: 130, resize: "vertical", background: "transparent", color: "inherit", border: "1px solid " + borderC, borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 } })),
         h("div", { style: { height: 14 } }),
-        ffield("Attachments", h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 9 } },
-          h("input", { type: "file", multiple: true, "aria-label": "Add feedback attachments", disabled: savingFollowup, onChange: function (e) { var selected = Array.prototype.slice.call((e.target && e.target.files) || []); if (selected.length) upd({ files: (followup.files || []).concat(selected), uploadError: "" }); e.target.value = ""; } }),
+        ffield("Attachments", h("div", { "aria-label": "Add feedback attachments", onDragEnter: function (e) { if (!savingFollowup && draggingFiles(e)) { e.preventDefault(); setFollowupAttachmentsDragging(true); } }, onDragOver: function (e) { if (!savingFollowup && draggingFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFollowupAttachmentsDragging(true); } }, onDragLeave: leaveFollowupAttachments, onDrop: function (e) { if (savingFollowup || !draggingFiles(e)) return; e.preventDefault(); e.stopPropagation(); setFollowupAttachmentsDragging(false); addFollowupFiles(Array.prototype.slice.call(e.dataTransfer.files || [])); }, style: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 9, padding: 8, borderRadius: 9, border: "1px dashed " + (followupAttachmentsDragging ? accent : borderC), background: followupAttachmentsDragging ? bgMuted : "transparent", boxShadow: followupAttachmentsDragging ? "0 0 0 2px " + accent + "33" : "none", transition: "background .12s ease, border-color .12s ease, box-shadow .12s ease" } },
+          h("input", { type: "file", multiple: true, "aria-label": "Add feedback attachments", disabled: savingFollowup, onChange: function (e) { addFollowupFiles(Array.prototype.slice.call((e.target && e.target.files) || [])); e.target.value = ""; } }),
           (followup.files || []).length ? h("div", { "aria-live": "polite", style: { width: "100%", display: "flex", flexDirection: "column", gap: 6 } }, (followup.files || []).map(function (file, index) { return h("div", { key: file.name + "-" + index, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, minWidth: 0 } }, h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 auto" } }, file.name + (file.size != null ? " (" + Math.ceil(file.size / 1024) + " KB)" : "")), h("button", { type: "button", disabled: savingFollowup, onClick: function () { upd({ files: (followup.files || []).filter(function (_, i) { return i !== index; }) }); }, "aria-label": "Remove attachment " + file.name, style: { background: "transparent", color: muted, border: "1px solid " + borderC, borderRadius: 6, padding: "3px 7px", cursor: savingFollowup ? "not-allowed" : "pointer" } }, "Remove")); })) : h("span", { style: { fontSize: 12, color: muted } }, "Optional. Files are checked and stored by the host attachment service."),
           followup.uploadError ? h("span", { role: "alert", style: { color: "#f87171", fontSize: 12.5, lineHeight: 1.45 } }, followup.uploadError) : null)),
         h("div", { style: { height: 22 } }),

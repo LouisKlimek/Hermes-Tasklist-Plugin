@@ -14,6 +14,10 @@ assert(modal, "feedback popup implementation must be present");
 assert(source.includes('files: [], uploadError: ""'), "new feedback must initialize an empty attachment selection");
 assert(modal[0].includes('type: "file", multiple: true'), "feedback popup must provide an accessible multi-file control");
 assert(modal[0].includes('"aria-label": "Add feedback attachments"'), "file selection needs an accessible label");
+assert(modal[0].includes('onDragEnter:'), "feedback popup must expose a drag-enter attachment target");
+assert(modal[0].includes('onDragLeave: leaveFollowupAttachments'), "feedback drag state must reset after leaving the target");
+assert(modal[0].includes('onDrop:'), "feedback popup must accept dropped files");
+assert(modal[0].includes('addFollowupFiles(Array.prototype.slice.call(e.dataTransfer.files || []))'), "dropped feedback files must reuse the chooser ingestion path");
 assert(modal[0].includes('"aria-label": "Remove attachment " + file.name'), "selected attachments must be removable");
 assert(modal[0].includes('file.name + (file.size != null'), "selected attachments must expose safe filename and size metadata");
 assert(modal[0].includes('role: "alert"'), "attachment failures must be announced to users");
@@ -29,4 +33,7 @@ assert(submit[0].includes('automatic cleanup also failed'), "cleanup failures mu
 assert(submit[0].includes('reference " + newId'), "cleanup failures must expose the partial feedback reference for recovery");
 assert(!submit[0].includes('localStorage.setItem'), "feedback attachments must not use plugin-local storage");
 
-console.log("feedback attachment contract: 17 assertions passed");
+assert(source.includes('addDraftFiles(Array.prototype.slice.call(e.dataTransfer.files || []))'), "new-task drops must reuse the chooser ingestion path");
+assert(source.includes('onDragLeave: leaveDraftAttachments'), "new-task drag state must reset after leaving the target");
+
+console.log("feedback attachment contract: 23 assertions passed");
