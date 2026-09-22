@@ -117,18 +117,35 @@ _SEQUENCE_WATCHER_NAME = "kanban-global-sequence-release-watcher"
 _AUTO_MERGE_TYPE = re.compile(r"(?:^|\n)Type:\s*GitHub Auto Merge\s*(?:\n|$)")
 
 
-def _sequence_watcher_installed() -> bool:
-    """Return whether this active Hermes profile opted into sequenced releases."""
+def _manifest_has_active_sequence_watcher(path: Path) -> bool:
+    """Return whether one cron manifest enables the sequence watcher."""
     try:
-        with (_hermes_home() / "cron" / "jobs.json").open("r", encoding="utf-8-sig") as f:
+        with path.open("r", encoding="utf-8-sig") as f:
             raw = json.load(f)
         jobs = raw.get("jobs", []) if isinstance(raw, dict) else raw
         return isinstance(jobs, list) and any(
-            isinstance(job, dict) and job.get("name") == _SEQUENCE_WATCHER_NAME
+            isinstance(job, dict)
+            and job.get("name") == _SEQUENCE_WATCHER_NAME
+            and job.get("enabled", True)
             for job in jobs
         )
     except (OSError, ValueError, json.JSONDecodeError):
         return False
+
+
+def _profile_cron_manifest_paths() -> List[Path]:
+    """List cron manifests owned by all installed Hermes profiles."""
+    try:
+        return list(Path("/opt/data/profiles").glob("*/cron/jobs.json"))
+    except OSError:
+        return []
+
+
+def _sequence_watcher_installed() -> bool:
+    """Return whether any Hermes profile enables sequenced releases."""
+    if _manifest_has_active_sequence_watcher(_hermes_home() / "cron" / "jobs.json"):
+        return True
+    return any(_manifest_has_active_sequence_watcher(path) for path in _profile_cron_manifest_paths())
 
 
 def _sequence_predecessors(slug: Optional[str]) -> List[dict]:

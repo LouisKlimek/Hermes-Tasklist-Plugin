@@ -56,6 +56,7 @@ def test_watcher_absent_hides_control_without_loading_candidates():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         setattr(api, "_hermes_home", lambda: home)
+        setattr(api, "_profile_cron_manifest_paths", lambda: [])
         assert api.sequence_predecessors("board-a") == {"enabled": False, "candidates": []}
 
 
@@ -64,6 +65,7 @@ def test_watcher_present_returns_only_newest_merge_cards():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         setattr(api, "_hermes_home", lambda: home)
+        setattr(api, "_profile_cron_manifest_paths", lambda: [])
         setattr(api, "_kdb", None)
         (home / "cron").mkdir()
         (home / "cron" / "jobs.json").write_text(json.dumps({"jobs": [{"name": "kanban-global-sequence-release-watcher"}]}))
@@ -71,6 +73,28 @@ def test_watcher_present_returns_only_newest_merge_cards():
         result = api.sequence_predecessors("board-a")
         assert result["enabled"] is True
         assert [item["id"] for item in result["candidates"]] == ["t_new_merge", "t_old_merge"]
+
+
+def test_ceo_profile_watcher_enables_control_and_ignores_bad_manifests():
+    api = load_api()
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        ceo_manifest = home / "profiles" / "ceo-orchestrator" / "cron" / "jobs.json"
+        unreadable_manifest = home / "profiles" / "other" / "cron" / "jobs.json"
+        ceo_manifest.parent.mkdir(parents=True)
+        unreadable_manifest.parent.mkdir(parents=True)
+        ceo_manifest.write_text(json.dumps({"jobs": [{
+            "name": "kanban-global-sequence-release-watcher", "enabled": True
+        }]}))
+        unreadable_manifest.write_text("not valid json")
+        setattr(api, "_hermes_home", lambda: home)
+        setattr(api, "_profile_cron_manifest_paths", lambda: [ceo_manifest, unreadable_manifest])
+        assert api.sequence_predecessors("board-a") == {"enabled": True, "candidates": []}
+
+        ceo_manifest.write_text(json.dumps({"jobs": [{
+            "name": "kanban-global-sequence-release-watcher", "enabled": False
+        }]}))
+        assert api.sequence_predecessors("board-a") == {"enabled": False, "candidates": []}
 
 
 def test_dialog_uses_searchable_control_and_exact_optional_description_prefix():
@@ -98,6 +122,7 @@ def test_dialog_forces_and_explains_blocked_status_with_predecessor():
 if __name__ == "__main__":
     test_watcher_absent_hides_control_without_loading_candidates()
     test_watcher_present_returns_only_newest_merge_cards()
+    test_ceo_profile_watcher_enables_control_and_ignores_bad_manifests()
     test_dialog_uses_searchable_control_and_exact_optional_description_prefix()
     test_dialog_forces_and_explains_blocked_status_with_predecessor()
     print("sequence predecessor contract: 14 assertions passed")
